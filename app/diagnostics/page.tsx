@@ -3,9 +3,9 @@ import KpiCard from '@/components/KpiCard';
 import BarRank from '@/components/BarRank';
 import { getKpis, getDiagnostics, getTrends } from '@/lib/queries';
 
-export default async function Diagnostics({ searchParams }: { searchParams: { month?: string; specialty?: string } }) {
-  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null };
-  const [k, diag, trends] = await Promise.all([getKpis(f), getDiagnostics(f), getTrends(f.specialty)]);
+export default async function Diagnostics({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string } }) {
+  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null, doctor: searchParams.doctor ?? null };
+  const [k, diag, trends] = await Promise.all([getKpis(f), getDiagnostics(f), getTrends(f.specialty, f.doctor)]);
   return (
     <>
       <PageHead title="Labs & Scans" />

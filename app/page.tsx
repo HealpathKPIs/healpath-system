@@ -4,7 +4,7 @@ import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
-import { getKpis, getDiseases, getDrugs, getTrends, listMonths, listSpecialties } from '@/lib/queries';
+import { getKpis, getDiseases, getDrugs, getTrends, listMonths, listSpecialties, listDoctors } from '@/lib/queries';
 
 function OverviewKpi({ label, value, delta, tone }: { label: string; value: string | number; delta?: number; tone: string }) {
   return (
@@ -16,10 +16,10 @@ function OverviewKpi({ label, value, delta, tone }: { label: string; value: stri
   );
 }
 
-export default async function Overview({ searchParams }: { searchParams: { month?: string; specialty?: string } }) {
-  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null };
+export default async function Overview({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string } }) {
+  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null, doctor: searchParams.doctor ?? null };
   const [k, diseases, drugs, trends] = await Promise.all([
-    getKpis(f), getDiseases(f, 5), getDrugs(f), getTrends(f.specialty),
+    getKpis(f), getDiseases(f, 5), getDrugs(f), getTrends(f.specialty, f.doctor),
   ]);
   return (
     <section className="overview-report">
@@ -30,7 +30,7 @@ export default async function Overview({ searchParams }: { searchParams: { month
           <p className="overview-subtitle">Executive utilization summary for the 2026 reporting window</p>
         </div>
         <Suspense fallback={<div className="filters"><div className="skeleton-line" style={{ width: 150, height: 28 }} /><div className="skeleton-line" style={{ width: 150, height: 28 }} /></div>}>
-          <FilterBar months={listMonths()} specialties={listSpecialties()} />
+          <FilterBar months={listMonths()} specialties={listSpecialties()} doctors={listDoctors()} />
         </Suspense>
       </div>
 

@@ -4,8 +4,8 @@ import Donut from '@/components/Donut';
 import DataTable from '@/components/DataTable';
 import { getDiseases, getDiseaseDescriptions } from '@/lib/queries';
 
-export default async function Diseases({ searchParams }: { searchParams: { month?: string; specialty?: string } }) {
-  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null };
+export default async function Diseases({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string } }) {
+  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null, doctor: searchParams.doctor ?? null };
   const [blocks, descriptions] = await Promise.all([getDiseases(f, 10), getDiseaseDescriptions(f)]);
   return (
     <>

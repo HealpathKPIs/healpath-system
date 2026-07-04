@@ -5,6 +5,7 @@ export type MonthYear = string; // 'YYYY-MM'
 export interface Filters {
   month?: MonthYear | null;   // null = all months
   specialty?: string | null;  // null = all specialties
+  doctor?: string | null;     // null = all doctors (practitioner_name)
 }
 
 export interface Kpis {

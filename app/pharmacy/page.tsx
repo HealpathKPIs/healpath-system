@@ -7,9 +7,9 @@ function titleCase(s: string) {
   return s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 }
 
-export default async function Pharmacy({ searchParams }: { searchParams: { month?: string; specialty?: string } }) {
-  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null };
-  const [k, drugs, trends] = await Promise.all([getKpis(f), getDrugs(f), getTrends(f.specialty)]);
+export default async function Pharmacy({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string } }) {
+  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null, doctor: searchParams.doctor ?? null };
+  const [k, drugs, trends] = await Promise.all([getKpis(f), getDrugs(f), getTrends(f.specialty, f.doctor)]);
 
   const topAc = drugs.ac[0];
   const topBrand = drugs.brands[0];

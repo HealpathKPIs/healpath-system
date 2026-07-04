@@ -6,7 +6,7 @@ const MONTH_LABEL: Record<string, string> = {
   '2026-04': 'Apr 2026', '2026-05': 'May 2026', '2026-06': 'Jun 2026',
 };
 
-export default function FilterBar({ months, specialties }: { months: string[]; specialties: string[] }) {
+export default function FilterBar({ months, specialties, doctors }: { months: string[]; specialties: string[]; doctors: string[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -26,6 +26,10 @@ export default function FilterBar({ months, specialties }: { months: string[]; s
       <select aria-label="Specialty" value={params.get('specialty') ?? ''} onChange={(e) => set('specialty', e.target.value)}>
         <option value="">All specialties</option>
         {specialties.map((s) => <option key={s} value={s}>{s}</option>)}
+      </select>
+      <select aria-label="Doctor" value={params.get('doctor') ?? ''} onChange={(e) => set('doctor', e.target.value)}>
+        <option value="">All doctors</option>
+        {doctors.map((d) => <option key={d} value={d}>{d}</option>)}
       </select>
     </div>
   );

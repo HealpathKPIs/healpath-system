@@ -16,9 +16,12 @@ import snapshot from '../data/snapshot2026.json';
 
 // Base population for every live metric = the 2026 reporting window (this is the
 // scope the Power BI model is built on; the raw table also holds 2025 rows).
-// Positional binds: $1 = month (nullable), $2 = specialty (nullable).
+// Positional binds: $1 = month (nullable), $2 = specialty (nullable), $3 = doctor
+// (practitioner_name, nullable). Any per-query LIMIT therefore uses $4.
 const VISIT_FILTER =
-  "v.month_year like '2026-%' and ($1::text is null or v.month_year = $1) and ($2::text is null or v.doctor_specialty = $2)";
+  "v.month_year like '2026-%' and ($1::text is null or v.month_year = $1) " +
+  "and ($2::text is null or v.doctor_specialty = $2) " +
+  "and ($3::text is null or v.practitioner_name = $3)";
 
 function arrow(delta: number): TrendArrow {
   if (delta > 0) return '▲ Increase';
@@ -27,6 +30,10 @@ function arrow(delta: number): TrendArrow {
 }
 
 function specialtyParam(s?: string | null): string | null {
+  return s ? s.trim() : null;
+}
+
+function doctorParam(s?: string | null): string | null {
   return s ? s.trim() : null;
 }
 
@@ -163,11 +170,64 @@ function snapFor(f: Filters): Snap['all'] {
   return snapshot.all;
 }
 
+// --- live enumeration cache --------------------------------------------------
+// listMonths/listSpecialties must stay SYNCHRONOUS (they are called synchronously
+// in server components — the (): string[] contract cannot change). We therefore
+// warm a module-level cache from Postgres asynchronously (fire-and-forget,
+// memoised) and the sync accessors return the live cached values once available,
+// falling back to the bundled snapshot until then or if the DB is unreachable.
+let monthsCache: string[] | null = null;
+let specialtiesCache: string[] | null = null;
+let doctorsCache: string[] | null = null;
+let enumWarming: Promise<void> | null = null;
+
+async function refreshEnumerations(): Promise<void> {
+  if (!hasDb) return;
+  try {
+    const [months, specialties, doctors] = await Promise.all([
+      dbQuery<{ month_year: string }>(
+        "select distinct month_year from healpath.visits where month_year like '2026-%' order by month_year",
+      ),
+      dbQuery<{ s: string }>(
+        "select distinct btrim(doctor_specialty) as s from healpath.visits " +
+          "where month_year like '2026-%' and doctor_specialty is not null and btrim(doctor_specialty) <> '' order by 1",
+      ),
+      dbQuery<{ d: string }>(
+        "select distinct btrim(practitioner_name) as d from healpath.visits " +
+          "where month_year like '2026-%' and practitioner_name is not null and btrim(practitioner_name) <> '' order by 1",
+      ),
+    ]);
+    if (months.length) monthsCache = months.map((r) => r.month_year);
+    if (specialties.length) specialtiesCache = specialties.map((r) => r.s);
+    if (doctors.length) doctorsCache = doctors.map((r) => r.d);
+  } catch (e) {
+    console.warn('listMonths/listSpecialties/listDoctors live refresh failed, snapshot retained:', (e as Error).message);
+  }
+}
+
+// Snapshot fallback for the doctor list (the bundled snapshot only carries the
+// top-20 doctor matrix, which is enough until the live cache warms / if DB down).
+function snapshotDoctors(): string[] {
+  return [...new Set((snapshot.all.doctors as DoctorRow[]).map((d) => d.practitioner))].sort();
+}
+
+// Warm once; safe to call from the sync accessors (non-blocking) or to await in tests.
+export function warmEnumerations(): Promise<void> {
+  if (!enumWarming) enumWarming = refreshEnumerations();
+  return enumWarming;
+}
+
 export function listMonths(): string[] {
-  return snapshot.months;
+  if (hasDb) void warmEnumerations();
+  return monthsCache ?? (snapshot.months as string[]);
 }
 export function listSpecialties(): string[] {
-  return snapshot.specialties;
+  if (hasDb) void warmEnumerations();
+  return specialtiesCache ?? (snapshot.specialties as string[]);
+}
+export function listDoctors(): string[] {
+  if (hasDb) void warmEnumerations();
+  return doctorsCache ?? snapshotDoctors();
 }
 
 export async function getKpis(f: Filters): Promise<Kpis> {
@@ -188,7 +248,7 @@ export async function getKpis(f: Filters): Promise<Kpis> {
             / nullif((select count(distinct visit_id) from base), 0) as avg_labs,
           (select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where ${VISIT_FILTER})
             / nullif((select count(distinct visit_id) from base), 0) as avg_scans
-      `, [f.month ?? null, specialtyParam(f.specialty)]);
+      `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor)]);
       const r = rows[0];
       if (r) {
         return {
@@ -227,8 +287,8 @@ export async function getDiseases(f: Filters, limit = 10): Promise<RankRow[]> {
         select dg.icd_block as label, count(*)::int as value
         from healpath.diagnosis_fact dg join healpath.visits v on v.visit_id = dg.visit_id
         where ${VISIT_FILTER} and dg.icd_block is not null and btrim(dg.icd_block) <> ''
-        group by dg.icd_block order by value desc limit $3
-      `, [f.month ?? null, specialtyParam(f.specialty), limit]);
+        group by dg.icd_block order by value desc limit $4
+      `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), limit]);
       return rows.map((r) => ({ label: r.label, value: Number(r.value) }));
     } catch (e) {
       console.warn('getDiseases live query failed, falling back to snapshot:', (e as Error).message);
@@ -243,8 +303,8 @@ export async function getDiseaseDescriptions(f: Filters): Promise<RankRow[]> {
         select dg.icd_desc as label, count(*)::int as value
         from healpath.diagnosis_fact dg join healpath.visits v on v.visit_id = dg.visit_id
         where ${VISIT_FILTER} and dg.icd_desc is not null and btrim(dg.icd_desc) <> ''
-        group by dg.icd_desc order by value desc limit $3
-      `, [f.month ?? null, specialtyParam(f.specialty), 15]);
+        group by dg.icd_desc order by value desc limit $4
+      `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 15]);
       return rows.map((r) => ({ label: r.label, value: Number(r.value) }));
     } catch (e) {
       console.warn('getDiseaseDescriptions live query failed, falling back to snapshot:', (e as Error).message);
@@ -260,14 +320,14 @@ export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: Ran
           select d.ac as label, count(*)::int as value
           from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id
           where ${VISIT_FILTER} and d.ac is not null and btrim(d.ac) not in ('', '0')
-          group by d.ac order by value desc limit $3
-        `, [f.month ?? null, specialtyParam(f.specialty), 15]),
+          group by d.ac order by value desc limit $4
+        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 15]),
         dbQuery<{ label: string; value: number }>(`
           select lower(btrim(d.brand)) as label, count(*)::int as value
           from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id
           where ${VISIT_FILTER} and d.brand is not null and btrim(d.brand) <> ''
-          group by lower(btrim(d.brand)) order by value desc limit $3
-        `, [f.month ?? null, specialtyParam(f.specialty), 10]),
+          group by lower(btrim(d.brand)) order by value desc limit $4
+        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 10]),
       ]);
       return {
         ac: ac.map((r) => ({ label: r.label, value: Number(r.value) })),
@@ -288,14 +348,14 @@ export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; sca
           select l.tests as label, count(*)::int as value
           from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id
           where ${VISIT_FILTER} and l.tests is not null and btrim(l.tests) <> ''
-          group by l.tests order by value desc limit $3
-        `, [f.month ?? null, specialtyParam(f.specialty), 10]),
+          group by l.tests order by value desc limit $4
+        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 10]),
         dbQuery<{ label: string; value: number }>(`
           select s.tests as label, count(*)::int as value
           from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id
           where ${VISIT_FILTER} and s.tests is not null and btrim(s.tests) <> ''
-          group by s.tests order by value desc limit $3
-        `, [f.month ?? null, specialtyParam(f.specialty), 10]),
+          group by s.tests order by value desc limit $4
+        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 10]),
       ]);
       return {
         labs: labs.map((r) => ({ label: r.label, value: Number(r.value) })),
@@ -319,7 +379,7 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
           from healpath.visits v
           where ${VISIT_FILTER} and v.doctor_specialty is not null and btrim(v.doctor_specialty) <> ''
           group by label order by value desc
-        `, [f.month ?? null, specialtyParam(f.specialty)]),
+        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor)]),
         dbQuery<{ practitioner: string; specialty: string; visits: number; meds_count: number; labs_count: number }>(`
           with dv as (
             select v.visit_id, v.practitioner_name, v.doctor_specialty
@@ -364,8 +424,8 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
           left join drug_counts on drug_counts.practitioner_name = doctor_visits.practitioner_name
           left join lab_counts on lab_counts.practitioner_name = doctor_visits.practitioner_name
           order by doctor_visits.visits desc, doctor_visits.practitioner_name asc
-          limit $3
-        `, [f.month ?? null, specialtyParam(f.specialty), 20]),
+          limit $4
+        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 20]),
       ]);
       return {
         ranking: ranking.map((r) => ({ label: r.label, value: Number(r.value) })),
@@ -385,7 +445,7 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
   return { ranking: toRank(s.specialty as [string, number][]), doctors: s.doctors as DoctorRow[] };
 }
 
-export async function getTrends(specialty?: string | null): Promise<TrendResponse> {
+export async function getTrends(specialty?: string | null, doctor?: string | null): Promise<TrendResponse> {
   let points: TrendPoint[] | null = null;
   if (hasDb) {
     try {
@@ -393,15 +453,15 @@ export async function getTrends(specialty?: string | null): Promise<TrendRespons
         with mo as (
           select v.month_year as my, count(distinct v.visit_id) as visits
           from healpath.visits v
-          where v.month_year like '2026-%' and ($1::text is null or v.doctor_specialty = $1)
+          where v.month_year like '2026-%' and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)
           group by v.month_year
         )
         select mo.my as month,
-          round((select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1)) / nullif(mo.visits, 0), 2) as meds,
-          round((select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1)) / nullif(mo.visits, 0), 2) as labs,
-          round((select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1)) / nullif(mo.visits, 0), 2) as scans
+          round((select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)) / nullif(mo.visits, 0), 2) as meds,
+          round((select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)) / nullif(mo.visits, 0), 2) as labs,
+          round((select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)) / nullif(mo.visits, 0), 2) as scans
         from mo order by mo.my
-      `, [specialtyParam(specialty)]);
+      `, [specialtyParam(specialty), doctorParam(doctor)]);
       if (rows.length) points = rows.map((r) => ({ month: r.month, meds: Number(r.meds), labs: Number(r.labs), scans: Number(r.scans) }));
     } catch (e) {
       console.warn('getTrends live query failed, falling back to snapshot:', (e as Error).message);

@@ -21,6 +21,8 @@ Initial project commit: `57517b77a724caf0ff0e00c8087e6e0e998993fb`
 - Sprint 11: Doctor & Specialty live data.
 - Sprint 12: Trends live verification.
 - Sprint 13: Power BI parity audit and high-severity filter parity fix.
+- Sprint 14: `listMonths` and `listSpecialties` live via async-warmed cache (last snapshot data providers converted).
+- Sprint 15: Global interactive Doctor filter (URL query param) across Overview, Diseases, Pharmacy, Diagnostics, and Trends.
 
 ## Current Live Pages
 
@@ -31,9 +33,10 @@ Initial project commit: `57517b77a724caf0ff0e00c8087e6e0e998993fb`
 - Doctor & Specialty (`/doctors`)
 - Trends (`/trends`)
 
+Global filters (shareable via URL): Month, Specialty, Doctor.
+
 ## Remaining Work
 
-- Optional: make `listMonths` and `listSpecialties` live without breaking their synchronous contract.
 - Optional: load the 22 skipped fact rows after receiving a corrected workbook extract.
 - Later cleanup: remove dead `lib/supabase.ts` and the exported `SQL` object from `lib/queries.ts` when the snapshot-retirement plan is decided.
 - Known low-severity parity gap: a few month-filtered Top-N visuals have tied rows in a different order than Power BI; counts and labels match.

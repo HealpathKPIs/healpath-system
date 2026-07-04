@@ -1,6 +1,6 @@
 # HealPath Executive BI — Project Context
 
-**Single source of truth for future AI sessions.** Last updated: 2026-07-04 (after Sprint 13 parity audit).
+**Single source of truth for future AI sessions.** Last updated: 2026-07-04 (after Sprint 15).
 Read this first. Where it disagrees with memory, trust the code — verify claims against the repo before acting.
 
 ---
@@ -11,7 +11,7 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 - **Styling:** hand-written CSS design system in `app/globals.css` (semantic classes, premium executive look from Sprint 3). **No Tailwind, no PostCSS.** Do not introduce them.
 - **Charts:** `recharts` for the donut; custom inline SVG for `TrendLine` and `BarRank`.
 - **Data layer (`lib/queries.ts`)** — every metric function returns a fixed shape and has two sources:
-  - **Live:** `lib/pg.ts` → direct **parameterised, read-only** Postgres over the Supabase **Session Pooler**, verified TLS (`certs/prod-ca-2021.crt`, `rejectUnauthorized` on). Bind params only (`$1` month, `$2` specialty, `$3` limit) — no string interpolation of user input.
+  - **Live:** `lib/pg.ts` → direct **parameterised, read-only** Postgres over the Supabase **Session Pooler**, verified TLS (`certs/prod-ca-2021.crt`, `rejectUnauthorized` on). Bind params only — no string interpolation of user input. Shared `VISIT_FILTER` binds `$1` month, `$2` specialty, `$3` doctor (practitioner_name); any per-query LIMIT is `$4`. `getTrends` binds `$1` specialty, `$2` doctor.
   - **Fallback:** `data/snapshot2026.json` (bundled). Used automatically when `hasDb` is false or a live query throws.
 - **API routes** (`app/api/*`): call the same `lib/queries` functions → **API contracts are stable regardless of live/snapshot source.**
 - **`lib/supabase.ts`** (PostgREST client) and the exported `SQL` object in `lib/queries.ts` are now **dead code** (the `exec_sql` path was abandoned — see Decisions). Left in place; do not depend on them.
@@ -42,7 +42,9 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 | `getTrends` | **LIVE** | Overview, Pharmacy, Doctors, Diagnostics, Trends |
 | `getDiagnostics` | **LIVE** | Labs & Scans |
 | `getSpecialties` | **LIVE** | Doctors |
-| `listMonths` / `listSpecialties` | snapshot | Filter dropdowns (sync `(): string[]` — contract must stay sync) |
+| `listMonths` / `listSpecialties` / `listDoctors` | **LIVE** (async-warmed cache) | Filter dropdowns — sync `(): string[]` contract; async-warmed module cache with snapshot fallback (Sprint 14; `listDoctors` added Sprint 15, fallback = snapshot top-20 doctors) |
+
+**Global filters (Sprint 15):** Month, Specialty, **Doctor** — all via URL query params (`?month=&specialty=&doctor=`), shareable, and combinable. Every metric function accepts a `doctor` filter (`Filters.doctor` / `getTrends(specialty, doctor)`). `getTrends(specialty)` callers unaffected (doctor is an optional 2nd arg).
 
 ---
 
@@ -57,7 +59,7 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 | Doctor & Specialty | `/doctors` | ✅ **Live + verified** (Sprint 11) | All data live |
 | Labs & Scans | `/diagnostics` | ✅ **Live + verified** (Sprint 9) | All data live |
 
-Filter enumerations (`listMonths`/`listSpecialties`) are snapshot on every page.
+Filter enumerations (`listMonths`/`listSpecialties`) are **live** as of Sprint 14 (async-warmed cache; snapshot fallback until warm/if DB down). **Every data provider is now live.**
 
 ---
 
@@ -106,6 +108,7 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
    - Specialty URL filters are trimmed before binding to live SQL because the model snapshot includes `Chest and Respiratory\n` while the DB stores `Chest and Respiratory`.
 7. **Top-N limits:** ingredients 15, brands 10, ICD descriptions 15, ICD blocks per call (Overview 5, Diseases 10), labs 10, scans 10, doctor matrix 20.
 8. **"Heal Path Polyclinic (Chronic)/(Telehealth)"** as a `Practitioner Name` is a **legitimate business identifier** (clinic booked as practitioner), not corrupt data.
+9. **Doctor filter scope (Sprint 15):** the global Doctor filter (URL `?doctor=`, matched on `v.practitioner_name`, trimmed before binding) affects **Overview, Diseases, Pharmacy, Diagnostics, Trends**. The Doctors page renders the dropdown (global) but intentionally does **not** apply it (it doesn't parse `doctor`), so its ranking/matrix are unchanged.
 
 ---
 
@@ -136,22 +139,26 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 | 11 | Doctor & Specialty → live (`getSpecialties`) | `docs/SPRINT11_REPORT.md` |
 | 12 | Trends live verification (`getTrends`) | `docs/SPRINT12_REPORT.md` |
 | 13 | Power BI parity audit; fixed high-severity specialty filter newline mismatch | `docs/POWERBI_PARITY_REPORT.md` |
+| 14 | `listMonths`/`listSpecialties` → live (async-warmed cache, sync contract preserved) — **last snapshot providers converted** | `docs/SPRINT14_REPORT.md` |
+| 15 | Global **Doctor filter** (URL param) across Overview/Diseases/Pharmacy/Diagnostics/Trends; added `listDoctors`; all SQL still parameterised | `docs/SPRINT15_REPORT.md` |
 
 ---
 
 ## 9. Remaining sprints
 
-1. **Optional:** make `listMonths`/`listSpecialties` live (requires an async-safe approach without breaking the sync contract).
-2. **Optional data completeness:** load the 22 missing rows from a corrected extract.
-3. **Cleanup (later):** remove dead `lib/supabase.ts` + `SQL` object once all pages are live; decide when to retire the snapshot.
+1. **Optional data completeness:** load the 22 missing rows from a corrected extract.
+2. **Cleanup (later):** remove dead `lib/supabase.ts` + `SQL` object; decide when to retire the snapshot (still required as the live fallback).
+
+> All snapshot-based data providers are now live. The snapshot remains only as the automatic fallback.
 
 ---
 
 ## 10. Known issues / caveats
 
 - **22 fact rows unimported** — DB is 22 rows short of the workbook by design (source referential gaps). Documented in `docs/DATA_IMPORT_REPORT.md`.
-- **`listMonths`/`listSpecialties`** remain snapshot (fixed lists: months 2026-01…06; static specialty list).
+- **`listMonths`/`listSpecialties`** are live via an **async-warmed cache** (Sprint 14): the sync accessors return the snapshot on the very first call(s) after a cold start, then the live values once the background query resolves (typically the next request). This is intentional (the sync contract forbids awaiting) and imperceptible — live months are identical to the snapshot, and live specialties differ only by the correct trimmed `Chest and Respiratory` (vs the snapshot's `\n`).
 - **Low-severity parity gaps:** a few month-filtered Top-N visuals have tied rows in a different order than Power BI. Counts and labels match; documented in `docs/POWERBI_PARITY_REPORT.md`.
+- **Doctor filter on the Doctors page is inert** by design (Sprint 15 scope): the dropdown shows there (global FilterBar) but the page doesn't read `?doctor=`, so selecting a doctor there has no effect on that page.
 - **Login is cosmetic** (client-side cookie), not real auth.
 - **Dead code:** `lib/supabase.ts` and the `SQL` export in `lib/queries.ts` (exec_sql path abandoned).
 - **Runtime DB connection:** direct `pg` from the Next server works locally via the pooler; for a serverless deployment, size the pooler connection limits and ensure `certs/prod-ca-2021.crt` ships with the app. `DATABASE_URL` must be the **Session Pooler** URI (direct host is IPv6-only and unreachable here).

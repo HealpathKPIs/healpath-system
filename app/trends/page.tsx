@@ -3,8 +3,8 @@ import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
 import { getTrends } from '@/lib/queries';
 
-export default async function Trends({ searchParams }: { searchParams: { specialty?: string } }) {
-  const trends = await getTrends(searchParams.specialty ?? null);
+export default async function Trends({ searchParams }: { searchParams: { specialty?: string; doctor?: string } }) {
+  const trends = await getTrends(searchParams.specialty ?? null, searchParams.doctor ?? null);
   return (
     <>
       <PageHead title="Trends" />
