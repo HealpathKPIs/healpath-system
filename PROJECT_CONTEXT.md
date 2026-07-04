@@ -1,0 +1,163 @@
+# HealPath Executive BI — Project Context
+
+**Single source of truth for future AI sessions.** Last updated: 2026-07-04 (after Sprint 13 parity audit).
+Read this first. Where it disagrees with memory, trust the code — verify claims against the repo before acting.
+
+---
+
+## 1. Architecture
+
+- **Framework:** Next.js 14.2.5 (App Router), React 18, TypeScript. Server components render pages; API routes are thin wrappers.
+- **Styling:** hand-written CSS design system in `app/globals.css` (semantic classes, premium executive look from Sprint 3). **No Tailwind, no PostCSS.** Do not introduce them.
+- **Charts:** `recharts` for the donut; custom inline SVG for `TrendLine` and `BarRank`.
+- **Data layer (`lib/queries.ts`)** — every metric function returns a fixed shape and has two sources:
+  - **Live:** `lib/pg.ts` → direct **parameterised, read-only** Postgres over the Supabase **Session Pooler**, verified TLS (`certs/prod-ca-2021.crt`, `rejectUnauthorized` on). Bind params only (`$1` month, `$2` specialty, `$3` limit) — no string interpolation of user input.
+  - **Fallback:** `data/snapshot2026.json` (bundled). Used automatically when `hasDb` is false or a live query throws.
+- **API routes** (`app/api/*`): call the same `lib/queries` functions → **API contracts are stable regardless of live/snapshot source.**
+- **`lib/supabase.ts`** (PostgREST client) and the exported `SQL` object in `lib/queries.ts` are now **dead code** (the `exec_sql` path was abandoned — see Decisions). Left in place; do not depend on them.
+- **Auth:** login page sets a client-side cookie `hp_auth=1` (not real authentication). `DASHBOARD_PASSWORD` env exists but the flow is cosmetic.
+- **Import tooling:** `scripts/import.ts` (original supabase-js loader, superseded) and `scripts/pg-import.mjs` (direct-pg loader used in Sprint 6).
+
+### Key files
+| Path | Role |
+|---|---|
+| `lib/queries.ts` | All metric functions (live + snapshot fallback) |
+| `lib/pg.ts` | Pooled direct Postgres, verified TLS |
+| `app/globals.css` | Entire design system (frozen since Sprint 3) |
+| `scripts/pg-import.mjs` | Data loader + validation |
+| `certs/prod-ca-2021.crt` | Supabase CA (needed at runtime for TLS) |
+| `.env.local` | `DATABASE_URL` (pooler), Supabase URL + keys — secrets |
+| `data/snapshot2026.json` | Fallback dataset (mirrors the Power BI model) |
+
+---
+
+## 2. Function → source status (verified in code)
+
+| Function | Source | Used by |
+|---|---|---|
+| `getKpis` | **LIVE** | Overview, Pharmacy, Doctors, Diagnostics |
+| `getDiseases` | **LIVE** | Overview, Diseases |
+| `getDiseaseDescriptions` | **LIVE** | Diseases |
+| `getDrugs` | **LIVE** | Overview, Pharmacy |
+| `getTrends` | **LIVE** | Overview, Pharmacy, Doctors, Diagnostics, Trends |
+| `getDiagnostics` | **LIVE** | Labs & Scans |
+| `getSpecialties` | **LIVE** | Doctors |
+| `listMonths` / `listSpecialties` | snapshot | Filter dropdowns (sync `(): string[]` — contract must stay sync) |
+
+---
+
+## 3. Page status
+
+| Page | Route | Status | Notes |
+|---|---|---|---|
+| Overview | `/` | ✅ **Live + verified** (Sprint 7) | All data live |
+| Disease & Diagnosis | `/diseases` | ✅ **Live + verified** (Sprint 8) | All data live |
+| Pharmacy | `/pharmacy` | ✅ **Live + verified** (Sprint 10) | All data live |
+| Trends | `/trends` | ✅ **Live + verified** (Sprint 12) | All data live |
+| Doctor & Specialty | `/doctors` | ✅ **Live + verified** (Sprint 11) | All data live |
+| Labs & Scans | `/diagnostics` | ✅ **Live + verified** (Sprint 9) | All data live |
+
+Filter enumerations (`listMonths`/`listSpecialties`) are snapshot on every page.
+
+---
+
+## 4. Database status
+
+- **Supabase Postgres**, schema **`healpath`**, exposed to the API (`public, graphql_public, healpath`); `service_role` has `usage` + table/sequence grants.
+- **Tables & constraints:**
+  - `visits` — PK `visit_id` (text). Cols: visit_id, patient_id, prescription_date (timestamptz), doctor_specialty, practitioner_name, month_no, month_year.
+  - `diagnosis_fact`, `drug_fact`, `lab_fact`, `scan_fact` — PK `id` (bigint identity, auto), **FK `visit_id → visits.visit_id` (enforced)**.
+- **Connection:** Session Pooler `aws-0-eu-west-1.pooler.supabase.com:5432`, user `postgres.<ref>`, TLS **verified via CA cert** (URL `sslmode` is stripped in code; `ssl:{ca}` is authoritative). The direct `db.<ref>.supabase.co` host is IPv6-only and does **not** resolve here — always use the pooler.
+- **No `exec_sql` RPC** exists (intentionally — creating one was blocked as an RCE surface).
+
+### Current row counts (loaded)
+| Table | Rows | Workbook | Skipped |
+|---|---:|---:|---:|
+| visits | 86,329 | 86,329 | 0 |
+| diagnosis_fact | 116,802 | 116,808 | 6 |
+| drug_fact | 207,133 | 207,136 | 3 |
+| lab_fact | 68,345 | 68,355 | 10 |
+| scan_fact | 10,011 | 10,014 | 3 |
+
+FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
+
+---
+
+## 5. Import status
+
+- **Complete** via `scripts/pg-import.mjs` (Sprint 6). Source: `C:\Users\User\Downloads\HealPath_BI_Starter.xlsx`.
+- 488,620 of 488,642 rows loaded in one transaction (~170s).
+- **22 fact rows skipped** (6 distinct VisitIDs) — proven source referential gaps: their parent visits are absent from the `Visit` sheet (the 4 patient numbers have zero visits). Skipped by explicit user decision; **nothing fabricated**.
+- To reach 100%: a corrected extract whose `Visit` sheet includes those 6 VisitIDs, then re-run the loader.
+
+---
+
+## 6. Business rules (must be preserved)
+
+1. **2026 reporting window** — the Power BI model (and every live metric) is scoped to `month_year like '2026-%'` = **77,306 visits**. The DB also holds 2025-10/11/12 (9,023 visits) which the model **excludes**. Never drop this scope.
+2. **DAX → SQL measures:** Visits = `count(distinct visit_id)`; Patients = `count(distinct patient_id)`; Avg Meds/Visit = `count(drug brand, non-null) / distinct visits`; Avg Labs/Scans analogous with `lab_fact.tests` / `scan_fact.tests`.
+3. **VisitID cleaning:** trim + collapse internal whitespace.
+4. **month_year** derived from `Year` + `MonthName`; corrupt `Year < 2000` (1970 block) folded to 2026; `prescription_date` nulled for those rows.
+5. **Blank text → NULL.**
+6. **Filter nuances that reproduce the model exactly:**
+   - Active ingredients (`drug_fact.ac`): exclude `NULL`, `''`, and `'0'`.
+   - ICD **descriptions** (`diagnosis_fact.icd_desc`): exclude only `NULL`/blank — **keep the literal `'0'`** (the model has "0" = 3,336).
+   - Brands: `lower(btrim(brand))`, exclude NULL/blank.
+   - Specialty URL filters are trimmed before binding to live SQL because the model snapshot includes `Chest and Respiratory\n` while the DB stores `Chest and Respiratory`.
+7. **Top-N limits:** ingredients 15, brands 10, ICD descriptions 15, ICD blocks per call (Overview 5, Diseases 10), labs 10, scans 10, doctor matrix 20.
+8. **"Heal Path Polyclinic (Chronic)/(Telehealth)"** as a `Practitioner Name` is a **legitimate business identifier** (clinic booked as practitioner), not corrupt data.
+
+---
+
+## 7. Current decisions (standing)
+
+- **Live data = direct parameterised `pg`**, NOT an `exec_sql`/arbitrary-SQL RPC (security: RCE surface on shared DB — explicitly avoided/blocked). Do not create arbitrary-SQL functions.
+- **No shared-infra/DB-object changes** for live conversion — queries live in the app.
+- **One page at a time**; snapshot fallback retained everywhere; conversions are **data-layer only**.
+- **UI/CSS are frozen** at the Sprint 3 design. Sprints 7+ change only `lib/queries.ts` / `lib/pg.ts` / config.
+- **API contracts are fixed** — never change return shapes.
+- `listMonths`/`listSpecialties` stay **synchronous snapshot** (changing to async breaks callers).
+- Orphan rows: **skip + document**, never fabricate parent visits.
+
+---
+
+## 8. Completed sprints
+
+| Sprint | Outcome | Report |
+|---|---|---|
+| (pre) Env fix | Resolved stale `.next` causing "unstyled" render | `docs/ENVIRONMENT_VERIFICATION.md` |
+| 3 | Premium executive design system (globals.css) + Nav/TrendArrow/BarRank/TrendLine polish | `docs/SPRINT3_REPORT.md` |
+| 4 & 5 | Doctor + Pharmacy executive dashboards (presentation/composition, reused components) | `docs/SPRINT4_5_REPORT.md` |
+| 6 | Imported production data into Supabase (`pg` loader) | `docs/DATA_IMPORT_REPORT.md` |
+| 7 | Overview → live (`getKpis/getDiseases/getDrugs/getTrends`), created `lib/pg.ts` | `docs/SPRINT7_REPORT.md` |
+| 8 | Disease & Diagnosis → live (`getDiseaseDescriptions`) | `docs/SPRINT8_REPORT.md` |
+| 9 | Labs & Scans → live (`getDiagnostics`) | `docs/SPRINT9_REPORT.md` |
+| 10 | Pharmacy live verification (`getKpis/getDrugs/getTrends`) | `docs/SPRINT10_REPORT.md` |
+| 11 | Doctor & Specialty → live (`getSpecialties`) | `docs/SPRINT11_REPORT.md` |
+| 12 | Trends live verification (`getTrends`) | `docs/SPRINT12_REPORT.md` |
+| 13 | Power BI parity audit; fixed high-severity specialty filter newline mismatch | `docs/POWERBI_PARITY_REPORT.md` |
+
+---
+
+## 9. Remaining sprints
+
+1. **Optional:** make `listMonths`/`listSpecialties` live (requires an async-safe approach without breaking the sync contract).
+2. **Optional data completeness:** load the 22 missing rows from a corrected extract.
+3. **Cleanup (later):** remove dead `lib/supabase.ts` + `SQL` object once all pages are live; decide when to retire the snapshot.
+
+---
+
+## 10. Known issues / caveats
+
+- **22 fact rows unimported** — DB is 22 rows short of the workbook by design (source referential gaps). Documented in `docs/DATA_IMPORT_REPORT.md`.
+- **`listMonths`/`listSpecialties`** remain snapshot (fixed lists: months 2026-01…06; static specialty list).
+- **Low-severity parity gaps:** a few month-filtered Top-N visuals have tied rows in a different order than Power BI. Counts and labels match; documented in `docs/POWERBI_PARITY_REPORT.md`.
+- **Login is cosmetic** (client-side cookie), not real auth.
+- **Dead code:** `lib/supabase.ts` and the `SQL` export in `lib/queries.ts` (exec_sql path abandoned).
+- **Runtime DB connection:** direct `pg` from the Next server works locally via the pooler; for a serverless deployment, size the pooler connection limits and ensure `certs/prod-ca-2021.crt` ships with the app. `DATABASE_URL` must be the **Session Pooler** URI (direct host is IPv6-only and unreachable here).
+- **Dev-server hygiene:** running `next build`/`next dev`/`next start` against the same `.next` concurrently corrupts the cache (caused an earlier "unstyled" scare). Stop other servers before building.
+- **Environment:** Windows; use the Bash tool with the pooler for DB scripts. `dotenv`, `pg`, `@types/pg` are installed; `pg` is a runtime dependency.
+
+---
+
+*End of context. Keep this file updated at the end of each sprint.*

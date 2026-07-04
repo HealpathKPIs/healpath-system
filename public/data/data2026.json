@@ -1,0 +1,335 @@
+{
+ "trend": [
+  {
+   "m": "2026-01",
+   "visits": 27669,
+   "meds": 2.71,
+   "labs": 0.75,
+   "scans": 0.13
+  },
+  {
+   "m": "2026-02",
+   "visits": 8122,
+   "meds": 2.58,
+   "labs": 0.68,
+   "scans": 0.11
+  },
+  {
+   "m": "2026-03",
+   "visits": 8849,
+   "meds": 2.62,
+   "labs": 0.62,
+   "scans": 0.1
+  },
+  {
+   "m": "2026-04",
+   "visits": 10888,
+   "meds": 2.18,
+   "labs": 1.08,
+   "scans": 0.14
+  },
+  {
+   "m": "2026-05",
+   "visits": 10125,
+   "meds": 2.2,
+   "labs": 1.0,
+   "scans": 0.12
+  },
+  {
+   "m": "2026-06",
+   "visits": 11653,
+   "meds": 1.89,
+   "labs": 0.94,
+   "scans": 0.13
+  }
+ ],
+ "kpis": {
+  "visits": 77306,
+  "patients": 29128,
+  "doctors": 61,
+  "specialties": 19,
+  "avg_meds": 2.42,
+  "avg_labs": 0.84,
+  "avg_scans": 0.12
+ },
+ "icd_blocks": [
+  {
+   "block": "Acute upper respiratory infections",
+   "count": 13701
+  },
+  {
+   "block": "Other acute lower respiratory infections",
+   "count": 8785
+  },
+  {
+   "block": "Other nutritional deficiencies",
+   "count": 7503
+  },
+  {
+   "block": "Metabolic disorders",
+   "count": 6031
+  },
+  {
+   "block": "Other diseases of intestines",
+   "count": 5744
+  },
+  {
+   "block": "Diseases of oesophagus, stomach and duodenum",
+   "count": 5634
+  },
+  {
+   "block": "Other dorsopathies",
+   "count": 3520
+  },
+  {
+   "block": "Symptoms and signs involving the digestive system and abdomen",
+   "count": 3374
+  },
+  {
+   "block": "Diabetes mellitus",
+   "count": 3285
+  },
+  {
+   "block": "Other diseases of upper respiratory tract",
+   "count": 2791
+  }
+ ],
+ "top_ac": [
+  {
+   "ac": "PARACETAMOL",
+   "count": 13928
+  },
+  {
+   "ac": "FEXOFENADINE",
+   "count": 7719
+  },
+  {
+   "ac": "IVY LEAVES",
+   "count": 4831
+  },
+  {
+   "ac": "MULTIVITAMINS",
+   "count": 4594
+  },
+  {
+   "ac": "AZITHROMYCIN",
+   "count": 4438
+  },
+  {
+   "ac": "Amoxicillin.Clavulanic acid",
+   "count": 4213
+  },
+  {
+   "ac": "PANTOPRAZOLE",
+   "count": 3964
+  },
+  {
+   "ac": "ISOTONIC SEAWATER",
+   "count": 3233
+  },
+  {
+   "ac": "ETORICOXIB",
+   "count": 3227
+  },
+  {
+   "ac": "CETIRIZINE.PSEUDOEPHEDRINE",
+   "count": 3131
+  },
+  {
+   "ac": "VITAMIN C.ZINC",
+   "count": 3031
+  },
+  {
+   "ac": "TRIAMCINOLONE",
+   "count": 3019
+  },
+  {
+   "ac": "ALPHA AMYLASE",
+   "count": 2910
+  },
+  {
+   "ac": "IBUPROFEN",
+   "count": 2598
+  },
+  {
+   "ac": "ANTITUSSIVE.COMBINATION",
+   "count": 2577
+  }
+ ],
+ "top_brands": [
+  {
+   "brand": "telfast",
+   "count": 7663
+  },
+  {
+   "brand": "doliprane",
+   "count": 6038
+  },
+  {
+   "brand": "panadol",
+   "count": 4065
+  },
+  {
+   "brand": "polymer",
+   "count": 3218
+  },
+  {
+   "brand": "ivyrospan",
+   "count": 3053
+  },
+  {
+   "brand": "nasacort",
+   "count": 3019
+  },
+  {
+   "brand": "cetal",
+   "count": 2835
+  },
+  {
+   "brand": "decancit",
+   "count": 2741
+  },
+  {
+   "brand": "maxilase",
+   "count": 2649
+  },
+  {
+   "brand": "xithrone",
+   "count": 2518
+  }
+ ],
+ "top_labs": [
+  {
+   "test": "Complete Blood Count - CBC",
+   "count": 6988
+  },
+  {
+   "test": "Vitamin D",
+   "count": 4352
+  },
+  {
+   "test": "Haemoglobin A1C",
+   "count": 3849
+  },
+  {
+   "test": "Urine Analysis",
+   "count": 3711
+  },
+  {
+   "test": "SGPT (ALT)",
+   "count": 2920
+  },
+  {
+   "test": "Ferritin",
+   "count": 2806
+  },
+  {
+   "test": "Creatinine In Serum",
+   "count": 2177
+  },
+  {
+   "test": "Lipid Profile(Chol,Tri,HDL,LDL)",
+   "count": 2070
+  },
+  {
+   "test": "LIPID PROFILE",
+   "count": 1979
+  },
+  {
+   "test": "Stool Analysis",
+   "count": 1715
+  }
+ ],
+ "top_scans": [
+  {
+   "test": "US ABDOMEN & PELVIS",
+   "count": 2243
+  },
+  {
+   "test": "MRI LUMBAR SPINE",
+   "count": 934
+  },
+  {
+   "test": "MRI KNEE",
+   "count": 594
+  },
+  {
+   "test": "MRI CERVICAL SPINE",
+   "count": 575
+  },
+  {
+   "test": "X-Ray Knee 2 views",
+   "count": 486
+  },
+  {
+   "test": "ECHO FOR ADULTS",
+   "count": 316
+  },
+  {
+   "test": "MSCT PNS ROUTINE/ONE CUT",
+   "count": 206
+  },
+  {
+   "test": "MRI SHOULDER",
+   "count": 202
+  },
+  {
+   "test": "US NECK",
+   "count": 171
+  },
+  {
+   "test": "US TESTIS",
+   "count": 158
+  }
+ ],
+ "specialties": [
+  {
+   "specialty": "Internal Medicine",
+   "visits": 22363
+  },
+  {
+   "specialty": "Family Medicine (Immediate Booking)",
+   "visits": 17978
+  },
+  {
+   "specialty": "Pediatrics",
+   "visits": 7605
+  },
+  {
+   "specialty": "Orthopedics",
+   "visits": 6918
+  },
+  {
+   "specialty": "Ear, Nose, and Throat",
+   "visits": 5856
+  },
+  {
+   "specialty": "Dermatology",
+   "visits": 5130
+  },
+  {
+   "specialty": "Obstetrics and Gynecology",
+   "visits": 2524
+  },
+  {
+   "specialty": "Urology",
+   "visits": 2503
+  },
+  {
+   "specialty": "Pulmonology",
+   "visits": 2407
+  },
+  {
+   "specialty": "Neurology",
+   "visits": 1693
+  },
+  {
+   "specialty": "Endocrinology",
+   "visits": 779
+  },
+  {
+   "specialty": "Cardiology",
+   "visits": 495
+  }
+ ]
+}
