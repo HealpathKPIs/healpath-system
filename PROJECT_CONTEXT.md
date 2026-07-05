@@ -1,6 +1,6 @@
 # HealPath Executive BI — Project Context
 
-**Single source of truth for future AI sessions.** Last updated: 2026-07-05 (after Sprint 19).
+**Single source of truth for future AI sessions.** Last updated: 2026-07-05 (after Sprint 20).
 Read this first. Where it disagrees with memory, trust the code — verify claims against the repo before acting.
 
 ---
@@ -55,6 +55,8 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 **Sprint 18B regression fixes:** `Nav` preserves `month`, `specialty`, `doctor`, `sel`, and `selv` on every page link. Doctor row active state is URL-driven (`?doctor=`) so stale DashboardContext cannot clear a doctor when the URL is empty. Doctor row clicks use the dropdown-equivalent URL path and trigger live server data on pages that honor doctor filtering. `TrendLine` now attaches the existing tooltip text to a larger transparent SVG hover target so the native tooltip is reachable without changing chart visuals.
 
 **Universal search (Sprint 19):** one reusable `components/SearchBox.tsx` (client) on Diseases / Pharmacy / Diagnostics / Doctors. Debounced 300ms, min 2 chars → `GET /api/search?scope&q` → `searchOptions(scope, q)` (SQL **ILIKE** live / snapshot **includes** fallback). Dropdown shows up to 8 hits with **highlighted** match + **keyboard nav** (↑↓/Enter/Esc). Selecting a hit sets `?q=<value>` (preserving other params); pages read it via `resolveFilters` → `Filters.search` and the search-enabled queries filter with `ILIKE $7`. Search scopes: Diseases = `icd_desc` + `diseases` (ICD code); Pharmacy = `ac`/`brand`/`medications`; Diagnostics = `lab_fact.tests`/`scan_fact.tests`; Doctors = `practitioner_name`/`doctor_specialty`. The old `DataTable` client-side search was removed on Diseases/Doctors (SearchBox replaces it). `?q` is **not** preserved across `Nav` (page-local search).
+
+**Executive insights (Sprint 20):** Overview now renders a deterministic executive insights section above the KPI grid. It contains an alert bar generated from already loaded Overview data using only doctors, medications, labs, visits, Avg Medications / Visit, and Avg Labs / Visit. The former "doctors contributed" alert was removed and replaced with a Vitamin D lab insight that reuses existing `getDiagnostics` live data, showing current requests and Delta % when latest/previous month data is available. Biggest Movers ignores diseases and compares only Avg Medications / Visit, Avg Labs / Visit, and Doctors for the latest trend month vs the previous trend month, reusing `getTrends` data plus existing month-scoped `getKpis` calls. Smart Comparison appears only when `doctor` is selected; its calculation is unchanged (`getKpis(f)` vs `getKpis({ ...f, doctor: null })`) and its presentation was polished with premium cards/status chips. No new SQL, routes, API routes, database tables, filters, auth changes, or AI generation were added.
 
 **Page honor matrix (which cross-filter each page applies):**
 | Page | month | specialty | doctor | drug | disease |
@@ -166,6 +168,7 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 | 18A | Rich trend point tooltip + Doctor chart/dropdown/URL synchronization (`?doctor=` canonical) | `docs/SPRINT18A_REPORT.md` |
 | 18B | Fixed Doctor URL refresh/persistence regressions and Trend tooltip hover target | `docs/SPRINT18B_REPORT.md` |
 | 19 | **Universal search** — reusable `SearchBox` autocomplete (ILIKE live / includes snapshot, debounce, min-2, highlight, keyboard nav) + `/api/search` + `?q` page filtering on Diseases/Pharmacy/Diagnostics/Doctors | `docs/SPRINT19_REPORT.md` |
+| 20 | **Executive Insights Panel** on Overview: deterministic alert bar, medication/lab/doctor Biggest Movers, and doctor Smart Comparison | `docs/SPRINT20_REPORT.md` |
 
 ---
 

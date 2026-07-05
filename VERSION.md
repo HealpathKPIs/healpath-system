@@ -1,10 +1,10 @@
 # HealPath System Version
 
-Version: v1.0.0
+Version: v1.2.0
 
 ## Commit Hash
 
-Initial project commit: `57517b77a724caf0ff0e00c8087e6e0e998993fb`
+Sprint 20 sync commit: `PENDING`
 
 ## Completed Sprints
 
@@ -21,8 +21,14 @@ Initial project commit: `57517b77a724caf0ff0e00c8087e6e0e998993fb`
 - Sprint 11: Doctor & Specialty live data.
 - Sprint 12: Trends live verification.
 - Sprint 13: Power BI parity audit and high-severity filter parity fix.
-- Sprint 14: `listMonths` and `listSpecialties` live via async-warmed cache (last snapshot data providers converted).
-- Sprint 15: Global interactive Doctor filter (URL query param) across Overview, Diseases, Pharmacy, Diagnostics, and Trends.
+- Sprint 14: `listMonths` and `listSpecialties` live via async-warmed cache.
+- Sprint 15: Global Doctor filter via URL query params.
+- Sprint 16: Cross-filter interaction infrastructure.
+- Sprint 17: Activated URL-backed cross-filtering.
+- Sprint 18A: Rich trend tooltip and Doctor synchronization.
+- Sprint 18B: Doctor URL persistence regression fixes and Trend tooltip hover target.
+- Sprint 19: Universal search.
+- Sprint 20: Executive Insights panel and Vitamin D alert.
 
 ## Current Live Pages
 
@@ -33,7 +39,7 @@ Initial project commit: `57517b77a724caf0ff0e00c8087e6e0e998993fb`
 - Doctor & Specialty (`/doctors`)
 - Trends (`/trends`)
 
-Global filters (shareable via URL): Month, Specialty, Doctor.
+Global filters: Month, Specialty, Doctor.
 
 ## Remaining Work
 
