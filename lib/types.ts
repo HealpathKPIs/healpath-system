@@ -6,6 +6,9 @@ export interface Filters {
   month?: MonthYear | null;   // null = all months
   specialty?: string | null;  // null = all specialties
   doctor?: string | null;     // null = all doctors (practitioner_name)
+  drug?: string | null;       // null = all; else visits containing this active ingredient/brand
+  disease?: string | null;    // null = all; else visits containing this ICD block
+  search?: string | null;     // null = none; else a case-insensitive partial term (Sprint 19)
 }
 
 export interface Kpis {
@@ -28,6 +31,7 @@ export interface TrendPoint {
   meds: number;
   labs: number;
   scans: number;
+  visits?: number; // present in live data (from the trend query); absent in the snapshot fallback
 }
 
 export interface TrendResponse {

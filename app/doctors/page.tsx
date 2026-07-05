@@ -2,13 +2,16 @@ import PageHead from '@/components/PageHead';
 import KpiCard from '@/components/KpiCard';
 import BarRank from '@/components/BarRank';
 import DataTable from '@/components/DataTable';
-import { getKpis, getSpecialties, getTrends } from '@/lib/queries';
+import SearchBox from '@/components/SearchBox';
+import { getKpis, getSpecialties, getTrends, resolveFilters } from '@/lib/queries';
 import type { RankRow } from '@/lib/types';
 
-export default async function Doctors({ searchParams }: { searchParams: { month?: string; specialty?: string } }) {
-  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null };
+export default async function Doctors({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string; q?: string } }) {
+  // Honours specialty (dropdown or selection) but stays inert to the doctor filter,
+  // exactly as the doctor dropdown behaves here (Sprint 15); no drug/disease drill-down.
+  const f = resolveFilters(searchParams, { doctor: false });
   const [k, { ranking, doctors }, trends] = await Promise.all([
-    getKpis(f), getSpecialties(f), getTrends(f.specialty),
+    getKpis(f), getSpecialties(f), getTrends(f.specialty, f.doctor, f.drug, f.disease),
   ]);
 
   // Presentation-only shaping of existing data — top performers by visit volume.
@@ -28,17 +31,18 @@ export default async function Doctors({ searchParams }: { searchParams: { month?
       <div className="grid two" style={{ marginBottom: 20 }}>
         <div className="card">
           <p className="section-title">Top performing doctors</p>
-          <BarRank data={topDoctors} color="#6366f1" />
+          <BarRank data={topDoctors} color="#6366f1" kind="doctor" />
         </div>
         <div className="card">
           <p className="section-title">Visits by specialty</p>
-          <BarRank data={ranking} color="#2563eb" />
+          <BarRank data={ranking} color="#2563eb" kind="specialty" />
         </div>
       </div>
 
       <div className="card">
         <p className="section-title">Doctor performance matrix — top 20 by volume</p>
-        <DataTable searchable searchKey="practitioner"
+        <SearchBox scope="doctors" placeholder="Search doctor or specialty…" />
+        <DataTable
           rows={doctors}
           columns={[
             { key: 'practitioner', label: 'Doctor' },

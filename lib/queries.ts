@@ -16,12 +16,16 @@ import snapshot from '../data/snapshot2026.json';
 
 // Base population for every live metric = the 2026 reporting window (this is the
 // scope the Power BI model is built on; the raw table also holds 2025 rows).
-// Positional binds: $1 = month (nullable), $2 = specialty (nullable), $3 = doctor
-// (practitioner_name, nullable). Any per-query LIMIT therefore uses $4.
+// Positional binds: $1 = month, $2 = specialty, $3 = doctor (practitioner_name),
+// $4 = drug (cross-filter: visits containing this active ingredient OR brand),
+// $5 = disease (cross-filter: visits containing this ICD block). All nullable.
+// Any per-query LIMIT therefore uses $6.
 const VISIT_FILTER =
   "v.month_year like '2026-%' and ($1::text is null or v.month_year = $1) " +
   "and ($2::text is null or v.doctor_specialty = $2) " +
-  "and ($3::text is null or v.practitioner_name = $3)";
+  "and ($3::text is null or v.practitioner_name = $3) " +
+  "and ($4::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $4 or lower(btrim(xdf.brand)) = $4)) " +
+  "and ($5::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $5))";
 
 function arrow(delta: number): TrendArrow {
   if (delta > 0) return '▲ Increase';
@@ -35,6 +39,55 @@ function specialtyParam(s?: string | null): string | null {
 
 function doctorParam(s?: string | null): string | null {
   return s ? s.trim() : null;
+}
+function drugParam(s?: string | null): string | null {
+  return s ? s.trim() : null;
+}
+function diseaseParam(s?: string | null): string | null {
+  return s ? s.trim() : null;
+}
+
+// Standard positional binds for VISIT_FILTER ($1..$5). Append a LIMIT as $6.
+function visitParams(f: Filters): (string | null)[] {
+  return [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), drugParam(f.drug), diseaseParam(f.disease)];
+}
+
+// Sprint 19 search: `%term%` ILIKE pattern (min 2 chars) bound as $7 on the
+// search-enabled queries; null when there is no (valid) search term.
+function searchLike(f: Filters): string | null {
+  const s = f.search?.trim();
+  return s && s.length >= 2 ? `%${s}%` : null;
+}
+// Snapshot-fallback search: case-insensitive `includes` on the row label.
+function applySearch<T extends RankRow>(rows: T[], f: Filters): T[] {
+  const s = f.search?.trim().toLowerCase();
+  if (!s || s.length < 2) return rows;
+  return rows.filter((r) => r.label.toLowerCase().includes(s));
+}
+
+// Resolve the effective server-side filters from the URL search params, applying
+// the Sprint 17 selection priority:  DashboardContext selection (reflected into
+// ?sel/?selv)  >  URL dropdown filter  >  default (null).
+// `honor` controls which cross-filter dimensions a given page responds to.
+export interface SelectionParams {
+  month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string; q?: string;
+}
+export function resolveFilters(
+  sp: SelectionParams,
+  honor: { doctor?: boolean; drug?: boolean; disease?: boolean } = { doctor: true },
+): Filters {
+  const type = sp.sel;
+  const value = sp.selv ?? null;
+  const sel = type && value ? { type, value } : null;
+  const doctorHonored = honor.doctor !== false;
+  return {
+    month: sp.month ?? null,
+    specialty: (sel?.type === 'specialty' ? sel.value : sp.specialty) ?? null,
+    doctor: doctorHonored ? ((sel?.type === 'doctor' ? sel.value : sp.doctor) ?? null) : null,
+    drug: honor.drug && sel?.type === 'drug' ? sel.value : null,
+    disease: honor.disease && sel?.type === 'disease' ? sel.value : null,
+    search: sp.q?.trim() || null,
+  };
 }
 
 // --- WHERE clause helper shared by every query -----------------------------
@@ -248,7 +301,7 @@ export async function getKpis(f: Filters): Promise<Kpis> {
             / nullif((select count(distinct visit_id) from base), 0) as avg_labs,
           (select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where ${VISIT_FILTER})
             / nullif((select count(distinct visit_id) from base), 0) as avg_scans
-      `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor)]);
+      `, visitParams(f));
       const r = rows[0];
       if (r) {
         return {
@@ -287,8 +340,8 @@ export async function getDiseases(f: Filters, limit = 10): Promise<RankRow[]> {
         select dg.icd_block as label, count(*)::int as value
         from healpath.diagnosis_fact dg join healpath.visits v on v.visit_id = dg.visit_id
         where ${VISIT_FILTER} and dg.icd_block is not null and btrim(dg.icd_block) <> ''
-        group by dg.icd_block order by value desc limit $4
-      `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), limit]);
+        group by dg.icd_block order by value desc limit $6
+      `, [...visitParams(f), limit]);
       return rows.map((r) => ({ label: r.label, value: Number(r.value) }));
     } catch (e) {
       console.warn('getDiseases live query failed, falling back to snapshot:', (e as Error).message);
@@ -303,14 +356,15 @@ export async function getDiseaseDescriptions(f: Filters): Promise<RankRow[]> {
         select dg.icd_desc as label, count(*)::int as value
         from healpath.diagnosis_fact dg join healpath.visits v on v.visit_id = dg.visit_id
         where ${VISIT_FILTER} and dg.icd_desc is not null and btrim(dg.icd_desc) <> ''
-        group by dg.icd_desc order by value desc limit $4
-      `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 15]);
+          and ($7::text is null or dg.icd_desc ilike $7 or dg.diseases ilike $7)
+        group by dg.icd_desc order by value desc limit $6
+      `, [...visitParams(f), 15, searchLike(f)]);
       return rows.map((r) => ({ label: r.label, value: Number(r.value) }));
     } catch (e) {
       console.warn('getDiseaseDescriptions live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  return toRank(snapFor(f).topIcdDesc as [string, number][]);
+  return applySearch(toRank(snapFor(f).topIcdDesc as [string, number][]), f);
 }
 export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: RankRow[] }> {
   if (hasDb) {
@@ -320,14 +374,16 @@ export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: Ran
           select d.ac as label, count(*)::int as value
           from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id
           where ${VISIT_FILTER} and d.ac is not null and btrim(d.ac) not in ('', '0')
-          group by d.ac order by value desc limit $4
-        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 15]),
+            and ($7::text is null or d.ac ilike $7 or d.brand ilike $7 or d.medications ilike $7)
+          group by d.ac order by value desc limit $6
+        `, [...visitParams(f), 15, searchLike(f)]),
         dbQuery<{ label: string; value: number }>(`
           select lower(btrim(d.brand)) as label, count(*)::int as value
           from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id
           where ${VISIT_FILTER} and d.brand is not null and btrim(d.brand) <> ''
-          group by lower(btrim(d.brand)) order by value desc limit $4
-        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 10]),
+            and ($7::text is null or d.brand ilike $7 or d.ac ilike $7 or d.medications ilike $7)
+          group by lower(btrim(d.brand)) order by value desc limit $6
+        `, [...visitParams(f), 10, searchLike(f)]),
       ]);
       return {
         ac: ac.map((r) => ({ label: r.label, value: Number(r.value) })),
@@ -338,7 +394,7 @@ export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: Ran
     }
   }
   const s = snapFor(f);
-  return { ac: toRank(s.topAc as [string, number][]), brands: toRank(s.topBrand as [string, number][]) };
+  return { ac: applySearch(toRank(s.topAc as [string, number][]), f), brands: applySearch(toRank(s.topBrand as [string, number][]), f) };
 }
 export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; scans: RankRow[] }> {
   if (hasDb) {
@@ -348,14 +404,16 @@ export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; sca
           select l.tests as label, count(*)::int as value
           from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id
           where ${VISIT_FILTER} and l.tests is not null and btrim(l.tests) <> ''
-          group by l.tests order by value desc limit $4
-        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 10]),
+            and ($7::text is null or l.tests ilike $7)
+          group by l.tests order by value desc limit $6
+        `, [...visitParams(f), 10, searchLike(f)]),
         dbQuery<{ label: string; value: number }>(`
           select s.tests as label, count(*)::int as value
           from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id
           where ${VISIT_FILTER} and s.tests is not null and btrim(s.tests) <> ''
-          group by s.tests order by value desc limit $4
-        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 10]),
+            and ($7::text is null or s.tests ilike $7)
+          group by s.tests order by value desc limit $6
+        `, [...visitParams(f), 10, searchLike(f)]),
       ]);
       return {
         labs: labs.map((r) => ({ label: r.label, value: Number(r.value) })),
@@ -366,7 +424,7 @@ export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; sca
     }
   }
   const s = snapFor(f);
-  return { labs: toRank(s.topLab as [string, number][]), scans: toRank(s.topScan as [string, number][]) };
+  return { labs: applySearch(toRank(s.topLab as [string, number][]), f), scans: applySearch(toRank(s.topScan as [string, number][]), f) };
 }
 export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; doctors: DoctorRow[] }> {
   if (hasDb) {
@@ -379,12 +437,13 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
           from healpath.visits v
           where ${VISIT_FILTER} and v.doctor_specialty is not null and btrim(v.doctor_specialty) <> ''
           group by label order by value desc
-        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor)]),
+        `, visitParams(f)),
         dbQuery<{ practitioner: string; specialty: string; visits: number; meds_count: number; labs_count: number }>(`
           with dv as (
             select v.visit_id, v.practitioner_name, v.doctor_specialty
             from healpath.visits v
             where ${VISIT_FILTER} and v.practitioner_name is not null and btrim(v.practitioner_name) <> ''
+              and ($7::text is null or v.practitioner_name ilike $7 or v.doctor_specialty ilike $7)
           ),
           doctor_visits as (
             select dv.practitioner_name, count(distinct dv.visit_id)::int as visits
@@ -424,8 +483,8 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
           left join drug_counts on drug_counts.practitioner_name = doctor_visits.practitioner_name
           left join lab_counts on lab_counts.practitioner_name = doctor_visits.practitioner_name
           order by doctor_visits.visits desc, doctor_visits.practitioner_name asc
-          limit $4
-        `, [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), 20]),
+          limit $6
+        `, [...visitParams(f), 20, searchLike(f)]),
       ]);
       return {
         ranking: ranking.map((r) => ({ label: r.label, value: Number(r.value) })),
@@ -442,27 +501,125 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
     }
   }
   const s = snapFor(f);
-  return { ranking: toRank(s.specialty as [string, number][]), doctors: s.doctors as DoctorRow[] };
+  const term = f.search?.trim().toLowerCase();
+  const doctors = (s.doctors as DoctorRow[]).filter((d) =>
+    !term || term.length < 2 ||
+    d.practitioner.toLowerCase().includes(term) || d.specialty.toLowerCase().includes(term));
+  return { ranking: toRank(s.specialty as [string, number][]), doctors };
 }
 
-export async function getTrends(specialty?: string | null, doctor?: string | null): Promise<TrendResponse> {
+// --- Universal search (Sprint 19) --------------------------------------------
+// Autocomplete suggestions per page scope. Live path uses SQL ILIKE (partial,
+// case-insensitive); snapshot fallback uses includes(). Returns up to 8 hits.
+export type SearchScope = 'diseases' | 'pharmacy' | 'diagnostics' | 'doctors';
+export interface SearchHit { label: string; hint: string }
+
+const SEARCH_SQL: Record<SearchScope, string> = {
+  diseases: `
+    select label, hint from (
+      select dg.icd_desc as label, min(dg.diseases) as hint, count(*) as n
+      from healpath.diagnosis_fact dg
+      where dg.icd_desc is not null and btrim(dg.icd_desc) <> '' and (dg.icd_desc ilike $1 or dg.diseases ilike $1)
+      group by dg.icd_desc order by n desc limit 8
+    ) t`,
+  pharmacy: `
+    select label, hint from (
+      (select d.ac as label, 'Ingredient' as hint, count(*) n from healpath.drug_fact d
+        where d.ac is not null and btrim(d.ac) not in ('','0') and d.ac ilike $1 group by d.ac order by n desc limit 4)
+      union all
+      (select lower(btrim(d.brand)) as label, 'Brand' as hint, count(*) n from healpath.drug_fact d
+        where d.brand is not null and btrim(d.brand) <> '' and d.brand ilike $1 group by lower(btrim(d.brand)) order by n desc limit 4)
+      union all
+      (select d.medications as label, 'Generic' as hint, count(*) n from healpath.drug_fact d
+        where d.medications is not null and btrim(d.medications) <> '' and d.medications ilike $1 group by d.medications order by n desc limit 4)
+    ) u order by n desc limit 8`,
+  diagnostics: `
+    select label, hint from (
+      (select l.tests as label, 'Lab' as hint, count(*) n from healpath.lab_fact l
+        where l.tests is not null and btrim(l.tests) <> '' and l.tests ilike $1 group by l.tests order by n desc limit 5)
+      union all
+      (select s.tests as label, 'Scan' as hint, count(*) n from healpath.scan_fact s
+        where s.tests is not null and btrim(s.tests) <> '' and s.tests ilike $1 group by s.tests order by n desc limit 5)
+    ) u order by n desc limit 8`,
+  doctors: `
+    select label, hint from (
+      (select v.practitioner_name as label, 'Doctor' as hint, count(*) n from healpath.visits v
+        where v.practitioner_name is not null and btrim(v.practitioner_name) <> '' and v.practitioner_name ilike $1 group by v.practitioner_name order by n desc limit 5)
+      union all
+      (select btrim(v.doctor_specialty) as label, 'Specialty' as hint, count(*) n from healpath.visits v
+        where v.doctor_specialty is not null and btrim(v.doctor_specialty) <> '' and v.doctor_specialty ilike $1 group by btrim(v.doctor_specialty) order by n desc limit 4)
+    ) u order by n desc limit 8`,
+};
+
+function snapshotSearch(scope: SearchScope, term: string): SearchHit[] {
+  const t = term.toLowerCase();
+  const inc = (label: string) => label.toLowerCase().includes(t);
+  const a = snapshot.all;
+  const rows: SearchHit[] = [];
+  const push = (arr: [string, number][], hint: string) => {
+    for (const [label] of arr) if (label && inc(label)) rows.push({ label, hint });
+  };
+  if (scope === 'diseases') push(a.topIcdDesc as [string, number][], 'Diagnosis');
+  else if (scope === 'pharmacy') { push(a.topAc as [string, number][], 'Ingredient'); push(a.topBrand as [string, number][], 'Brand'); }
+  else if (scope === 'diagnostics') { push(a.topLab as [string, number][], 'Lab'); push(a.topScan as [string, number][], 'Scan'); }
+  else {
+    for (const d of a.doctors as DoctorRow[]) {
+      if (inc(d.practitioner)) rows.push({ label: d.practitioner, hint: 'Doctor' });
+      else if (inc(d.specialty)) rows.push({ label: d.specialty, hint: 'Specialty' });
+    }
+  }
+  return rows.slice(0, 8);
+}
+
+export async function searchOptions(scope: SearchScope, query: string): Promise<SearchHit[]> {
+  const term = query.trim();
+  if (term.length < 2) return [];
+  if (hasDb && SEARCH_SQL[scope]) {
+    try {
+      const rows = await dbQuery<SearchHit>(SEARCH_SQL[scope], [`%${term}%`]);
+      return rows.map((r) => ({ label: r.label, hint: r.hint }));
+    } catch (e) {
+      console.warn('searchOptions live query failed, falling back to snapshot:', (e as Error).message);
+    }
+  }
+  return snapshotSearch(scope, term);
+}
+
+export async function getTrends(
+  specialty?: string | null,
+  doctor?: string | null,
+  drug?: string | null,
+  disease?: string | null,
+): Promise<TrendResponse> {
   let points: TrendPoint[] | null = null;
+  // Shared filter for the trend: specialty $1, doctor $2, drug $3, disease $4.
+  const cond =
+    "($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2) " +
+    "and ($3::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $3 or lower(btrim(xdf.brand)) = $3)) " +
+    "and ($4::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $4))";
   if (hasDb) {
     try {
-      const rows = await dbQuery<{ month: string; meds: number; labs: number; scans: number }>(`
+      const rows = await dbQuery<{ month: string; visits: number; meds: number; labs: number; scans: number }>(`
         with mo as (
           select v.month_year as my, count(distinct v.visit_id) as visits
           from healpath.visits v
-          where v.month_year like '2026-%' and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)
+          where v.month_year like '2026-%' and ${cond}
           group by v.month_year
         )
         select mo.my as month,
-          round((select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)) / nullif(mo.visits, 0), 2) as meds,
-          round((select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)) / nullif(mo.visits, 0), 2) as labs,
-          round((select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where v.month_year = mo.my and ($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2)) / nullif(mo.visits, 0), 2) as scans
+          mo.visits::int as visits,
+          round((select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as meds,
+          round((select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as labs,
+          round((select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as scans
         from mo order by mo.my
-      `, [specialtyParam(specialty), doctorParam(doctor)]);
-      if (rows.length) points = rows.map((r) => ({ month: r.month, meds: Number(r.meds), labs: Number(r.labs), scans: Number(r.scans) }));
+      `, [specialtyParam(specialty), doctorParam(doctor), drugParam(drug), diseaseParam(disease)]);
+      if (rows.length) points = rows.map((r) => ({
+        month: r.month,
+        visits: Number(r.visits),
+        meds: Number(r.meds),
+        labs: Number(r.labs),
+        scans: Number(r.scans),
+      }));
     } catch (e) {
       console.warn('getTrends live query failed, falling back to snapshot:', (e as Error).message);
     }

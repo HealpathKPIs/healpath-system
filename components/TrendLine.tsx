@@ -1,4 +1,4 @@
-import type { TrendPoint } from '@/lib/types';
+import type { TrendPoint, TrendResponse } from '@/lib/types';
 
 const LABEL: Record<string, string> = {
   '2026-01': 'Jan',
@@ -14,6 +14,15 @@ const SERIES = [
   { key: 'labs', label: 'Labs / visit', color: '#16a36f' },
   { key: 'scans', label: 'Scans / visit', color: '#2563eb' },
 ] as const;
+
+const MONTH_LABEL: Record<string, string> = {
+  '2026-01': 'Jan 2026',
+  '2026-02': 'Feb 2026',
+  '2026-03': 'Mar 2026',
+  '2026-04': 'Apr 2026',
+  '2026-05': 'May 2026',
+  '2026-06': 'Jun 2026',
+};
 
 function formatPoints(points: TrendPoint[], key: typeof SERIES[number]['key'], min: number, max: number) {
   const width = 760;
@@ -32,7 +41,27 @@ function formatPoints(points: TrendPoint[], key: typeof SERIES[number]['key'], m
   }).join(' ');
 }
 
-export default function TrendLine({ points }: { points: TrendPoint[] }) {
+function formatDelta(value: number) {
+  return value > 0 ? `+${value.toFixed(2)}` : value.toFixed(2);
+}
+
+function tooltipText(point: TrendPoint, delta?: TrendResponse['delta']) {
+  const lines = [
+    `Month: ${MONTH_LABEL[point.month] ?? point.month}`,
+    `Visits: ${typeof point.visits === 'number' ? point.visits.toLocaleString() : 'N/A'}`,
+    `Avg Meds / Visit: ${point.meds.toFixed(2)}`,
+    `Avg Labs / Visit: ${point.labs.toFixed(2)}`,
+    `Avg Scans / Visit: ${point.scans.toFixed(2)}`,
+  ];
+  if (delta) {
+    lines.push(`MoM Delta - Meds: ${formatDelta(delta.meds)}`);
+    lines.push(`MoM Delta - Labs: ${formatDelta(delta.labs)}`);
+    lines.push(`MoM Delta - Scans: ${formatDelta(delta.scans)}`);
+  }
+  return lines.join('\n');
+}
+
+export default function TrendLine({ points, delta }: { points: TrendPoint[]; delta?: TrendResponse['delta'] }) {
   if (!points.length) {
     return <div className="chart-empty">No trend data for the selected filters</div>;
   }
@@ -94,7 +123,14 @@ export default function TrendLine({ points }: { points: TrendPoint[] }) {
         {SERIES.map((series) => points.map((point, index) => {
           const [x, y] = formatPoints([point], series.key, min, max).split(',').map(Number);
           const adjustedX = 44 + index * ((760 - 44 - 18) / Math.max(points.length - 1, 1));
-          return <circle className="trend-dot" key={`${series.key}-${point.month}`} cx={adjustedX || x} cy={y} r="3.5" fill={series.color} />;
+          const pointDelta = index === points.length - 1 ? delta : undefined;
+          return (
+            <g key={`${series.key}-${point.month}`}>
+              <title>{tooltipText(point, pointDelta)}</title>
+              <circle cx={adjustedX || x} cy={y} r="10" fill="transparent" pointerEvents="all" />
+              <circle className="trend-dot" cx={adjustedX || x} cy={y} r="3.5" fill={series.color} />
+            </g>
+          );
         }))}
       </svg>
       <div className="trend-legend">

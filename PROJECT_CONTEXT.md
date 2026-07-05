@@ -1,6 +1,6 @@
 # HealPath Executive BI — Project Context
 
-**Single source of truth for future AI sessions.** Last updated: 2026-07-04 (after Sprint 15).
+**Single source of truth for future AI sessions.** Last updated: 2026-07-05 (after Sprint 19).
 Read this first. Where it disagrees with memory, trust the code — verify claims against the repo before acting.
 
 ---
@@ -11,7 +11,7 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 - **Styling:** hand-written CSS design system in `app/globals.css` (semantic classes, premium executive look from Sprint 3). **No Tailwind, no PostCSS.** Do not introduce them.
 - **Charts:** `recharts` for the donut; custom inline SVG for `TrendLine` and `BarRank`.
 - **Data layer (`lib/queries.ts`)** — every metric function returns a fixed shape and has two sources:
-  - **Live:** `lib/pg.ts` → direct **parameterised, read-only** Postgres over the Supabase **Session Pooler**, verified TLS (`certs/prod-ca-2021.crt`, `rejectUnauthorized` on). Bind params only — no string interpolation of user input. Shared `VISIT_FILTER` binds `$1` month, `$2` specialty, `$3` doctor (practitioner_name); any per-query LIMIT is `$4`. `getTrends` binds `$1` specialty, `$2` doctor.
+  - **Live:** `lib/pg.ts` → direct **parameterised, read-only** Postgres over the Supabase **Session Pooler**, verified TLS (`certs/prod-ca-2021.crt`, `rejectUnauthorized` on). Bind params only — no string interpolation of user input. Shared `VISIT_FILTER` binds `$1` month, `$2` specialty, `$3` doctor, `$4` drug (visits containing an active ingredient/brand), `$5` disease (visits containing an ICD block); any per-query LIMIT is `$6`. `getTrends` binds `$1` specialty, `$2` doctor, `$3` drug, `$4` disease. `resolveFilters(searchParams, honor)` computes effective filters (selection > URL > default).
   - **Fallback:** `data/snapshot2026.json` (bundled). Used automatically when `hasDb` is false or a live query throws.
 - **API routes** (`app/api/*`): call the same `lib/queries` functions → **API contracts are stable regardless of live/snapshot source.**
 - **`lib/supabase.ts`** (PostgREST client) and the exported `SQL` object in `lib/queries.ts` are now **dead code** (the `exec_sql` path was abandoned — see Decisions). Left in place; do not depend on them.
@@ -44,7 +44,27 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 | `getSpecialties` | **LIVE** | Doctors |
 | `listMonths` / `listSpecialties` / `listDoctors` | **LIVE** (async-warmed cache) | Filter dropdowns — sync `(): string[]` contract; async-warmed module cache with snapshot fallback (Sprint 14; `listDoctors` added Sprint 15, fallback = snapshot top-20 doctors) |
 
-**Global filters (Sprint 15):** Month, Specialty, **Doctor** — all via URL query params (`?month=&specialty=&doctor=`), shareable, and combinable. Every metric function accepts a `doctor` filter (`Filters.doctor` / `getTrends(specialty, doctor)`). `getTrends(specialty)` callers unaffected (doctor is an optional 2nd arg).
+**Global filters (Sprint 15):** Month, Specialty, **Doctor** — all via URL query params (`?month=&specialty=&doctor=`), shareable, and combinable. Every metric function accepts a `doctor` filter (`Filters.doctor` / `getTrends(specialty, doctor)`). `getTrends(specialty)` callers unaffected (doctor is an optional 2nd arg). As of Sprint 18B, Doctor chart clicks use the canonical `?doctor=` param, Nav preserves URL state across pages, and DashboardContext/URL/Doctor dropdown stay synchronized.
+
+**Cross-filter selection (Sprint 16 infra + Sprint 17 activated):** `lib/dashboard-context.tsx` provides a global `DashboardProvider` (wraps the app in `app/layout.tsx`) holding a single `selection: { type: 'drug'|'disease'|'doctor'|'specialty', value } | null` (`select()` toggle / `clear()`), read via `useDashboard()`. `BarRank`/`Donut` are client components; with a `kind` prop their rows/slices are clickable (`role=button`, `aria-pressed`, `data-selected`, cursor). A click updates the context (pressed visual) **and reflects the single selection into the URL as `?sel=<type>&selv=<value>`** so the server pages re-fetch. Server pages call `resolveFilters(searchParams, honor)` which applies **priority: selection (`?sel`) > URL dropdown (`?month/specialty/doctor`) > default**. Doctor/specialty selections reuse the doctor/specialty filter (behave exactly like the dropdown). Drug/disease are visit-population filters. Re-click clears `?sel` (back to parity). Labs/scans bars stay non-clickable.
+
+**Sprint 18A exception/upgrade:** Doctor chart clicks now behave exactly like the Doctor dropdown: they set `?doctor=<name>` and re-click clears `?doctor`; stale `?sel/?selv` is cleared. `FilterBar` mirrors `?doctor=` into `DashboardContext`, so the chart pressed state, URL, and dropdown are synchronized.
+
+**Trend tooltip (Sprint 18A):** `TrendPoint` includes `visits` in live data, and `TrendLine` tooltips show Month, Visits, Avg Meds / Visit, Avg Labs / Visit, Avg Scans / Visit. The existing `TrendResponse.delta` is passed to `TrendLine` and displayed on the latest point only; no new delta calculation was added.
+
+**Sprint 18B regression fixes:** `Nav` preserves `month`, `specialty`, `doctor`, `sel`, and `selv` on every page link. Doctor row active state is URL-driven (`?doctor=`) so stale DashboardContext cannot clear a doctor when the URL is empty. Doctor row clicks use the dropdown-equivalent URL path and trigger live server data on pages that honor doctor filtering. `TrendLine` now attaches the existing tooltip text to a larger transparent SVG hover target so the native tooltip is reachable without changing chart visuals.
+
+**Universal search (Sprint 19):** one reusable `components/SearchBox.tsx` (client) on Diseases / Pharmacy / Diagnostics / Doctors. Debounced 300ms, min 2 chars → `GET /api/search?scope&q` → `searchOptions(scope, q)` (SQL **ILIKE** live / snapshot **includes** fallback). Dropdown shows up to 8 hits with **highlighted** match + **keyboard nav** (↑↓/Enter/Esc). Selecting a hit sets `?q=<value>` (preserving other params); pages read it via `resolveFilters` → `Filters.search` and the search-enabled queries filter with `ILIKE $7`. Search scopes: Diseases = `icd_desc` + `diseases` (ICD code); Pharmacy = `ac`/`brand`/`medications`; Diagnostics = `lab_fact.tests`/`scan_fact.tests`; Doctors = `practitioner_name`/`doctor_specialty`. The old `DataTable` client-side search was removed on Diseases/Doctors (SearchBox replaces it). `?q` is **not** preserved across `Nav` (page-local search).
+
+**Page honor matrix (which cross-filter each page applies):**
+| Page | month | specialty | doctor | drug | disease |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Overview | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Diseases | ✓ | ✓ | ✓ | ✓ | ✗ (is the disease view) |
+| Pharmacy | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Labs & Scans | ✓ | ✓ | ✓ | ✗ | ✓ |
+| Trends | — | ✓ | ✓ | ✓ | ✓ |
+| Doctor & Specialty | ✓ | ✓ | ✗ (inert, Sprint 15) | ✗ | ✗ |
 
 ---
 
@@ -141,6 +161,11 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 | 13 | Power BI parity audit; fixed high-severity specialty filter newline mismatch | `docs/POWERBI_PARITY_REPORT.md` |
 | 14 | `listMonths`/`listSpecialties` → live (async-warmed cache, sync contract preserved) — **last snapshot providers converted** | `docs/SPRINT14_REPORT.md` |
 | 15 | Global **Doctor filter** (URL param) across Overview/Diseases/Pharmacy/Diagnostics/Trends; added `listDoctors`; all SQL still parameterised | `docs/SPRINT15_REPORT.md` |
+| 16 | Cross-filter **interaction infrastructure** — global `DashboardContext`; chart clicks (drug/disease/doctor/specialty) emit a shared selection (no analytics consumption yet) | `docs/SPRINT16_REPORT.md` |
+| 17 | **Activated cross-filtering** — selection reflected to `?sel/?selv`, consumed server-side via `resolveFilters` (priority selection > URL > default); drug/disease visit-population filters; honor matrix per page; re-click clears | `docs/SPRINT17_REPORT.md` |
+| 18A | Rich trend point tooltip + Doctor chart/dropdown/URL synchronization (`?doctor=` canonical) | `docs/SPRINT18A_REPORT.md` |
+| 18B | Fixed Doctor URL refresh/persistence regressions and Trend tooltip hover target | `docs/SPRINT18B_REPORT.md` |
+| 19 | **Universal search** — reusable `SearchBox` autocomplete (ILIKE live / includes snapshot, debounce, min-2, highlight, keyboard nav) + `/api/search` + `?q` page filtering on Diseases/Pharmacy/Diagnostics/Doctors | `docs/SPRINT19_REPORT.md` |
 
 ---
 
@@ -148,6 +173,8 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 
 1. **Optional data completeness:** load the 22 missing rows from a corrected extract.
 2. **Cleanup (later):** remove dead `lib/supabase.ts` + `SQL` object; decide when to retire the snapshot (still required as the live fallback).
+
+> Cross-filtering is active. URL state (`month`, `specialty`, `doctor`, `sel`, `selv`) is preserved across `Nav` navigation as of Sprint 18B.
 
 > All snapshot-based data providers are now live. The snapshot remains only as the automatic fallback.
 
@@ -158,7 +185,8 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 - **22 fact rows unimported** — DB is 22 rows short of the workbook by design (source referential gaps). Documented in `docs/DATA_IMPORT_REPORT.md`.
 - **`listMonths`/`listSpecialties`** are live via an **async-warmed cache** (Sprint 14): the sync accessors return the snapshot on the very first call(s) after a cold start, then the live values once the background query resolves (typically the next request). This is intentional (the sync contract forbids awaiting) and imperceptible — live months are identical to the snapshot, and live specialties differ only by the correct trimmed `Chest and Respiratory` (vs the snapshot's `\n`).
 - **Low-severity parity gaps:** a few month-filtered Top-N visuals have tied rows in a different order than Power BI. Counts and labels match; documented in `docs/POWERBI_PARITY_REPORT.md`.
-- **Doctor filter on the Doctors page is inert** by design (Sprint 15 scope): the dropdown shows there (global FilterBar) but the page doesn't read `?doctor=`, so selecting a doctor there has no effect on that page.
+- **Doctor filter on the Doctors page is inert** by design (Sprint 15 scope): the dropdown/selection show there (global FilterBar + clickable doctor bars) but the page doesn't apply a doctor filter, so selecting a doctor there has no effect on that page's ranking/matrix. As of Sprint 18B, clicking a doctor still synchronizes DashboardContext, URL, and the Doctor dropdown via `?doctor=`, and that URL state persists when navigating to pages that do apply the doctor filter.
+- **Selection vs dropdown priority (Sprint 17/18B):** an active chart selection overrides the same-dimension dropdown for `?sel/?selv` dimensions (e.g. selecting a specialty bar overrides `?specialty=`). Clearing the selection (re-click) restores the dropdown value. Doctor is the exception: doctor chart clicks use `?doctor=` and behave exactly like the Doctor dropdown.
 - **Login is cosmetic** (client-side cookie), not real auth.
 - **Dead code:** `lib/supabase.ts` and the `SQL` export in `lib/queries.ts` (exec_sql path abandoned).
 - **Runtime DB connection:** direct `pg` from the Next server works locally via the pooler; for a serverless deployment, size the pooler connection limits and ensure `certs/prod-ca-2021.crt` ships with the app. `DATABASE_URL` must be the **Session Pooler** URI (direct host is IPv6-only and unreachable here).

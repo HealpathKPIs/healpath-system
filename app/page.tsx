@@ -4,7 +4,7 @@ import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
-import { getKpis, getDiseases, getDrugs, getTrends, listMonths, listSpecialties, listDoctors } from '@/lib/queries';
+import { getKpis, getDiseases, getDrugs, getTrends, listMonths, listSpecialties, listDoctors, resolveFilters } from '@/lib/queries';
 
 function OverviewKpi({ label, value, delta, tone }: { label: string; value: string | number; delta?: number; tone: string }) {
   return (
@@ -16,10 +16,10 @@ function OverviewKpi({ label, value, delta, tone }: { label: string; value: stri
   );
 }
 
-export default async function Overview({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string } }) {
-  const f = { month: searchParams.month ?? null, specialty: searchParams.specialty ?? null, doctor: searchParams.doctor ?? null };
+export default async function Overview({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string } }) {
+  const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
   const [k, diseases, drugs, trends] = await Promise.all([
-    getKpis(f), getDiseases(f, 5), getDrugs(f), getTrends(f.specialty, f.doctor),
+    getKpis(f), getDiseases(f, 5), getDrugs(f), getTrends(f.specialty, f.doctor, f.drug, f.disease),
   ]);
   return (
     <section className="overview-report">
@@ -45,17 +45,17 @@ export default async function Overview({ searchParams }: { searchParams: { month
       <div className="overview-visual-grid">
         <div className="overview-visual">
           <p className="section-title">Top 5 disease blocks</p>
-          <BarRank data={diseases} color="#635bff" />
+          <BarRank data={diseases} color="#635bff" kind="disease" />
         </div>
         <div className="overview-visual">
           <p className="section-title">Top 5 active ingredients</p>
-          <BarRank data={drugs.ac.slice(0, 5)} color="#16a36f" />
+          <BarRank data={drugs.ac.slice(0, 5)} color="#16a36f" kind="drug" />
         </div>
       </div>
 
       <div className="overview-visual overview-trend">
         <p className="section-title">Average per visit by month</p>
-        <TrendLine points={trends.points} />
+        <TrendLine points={trends.points} delta={trends.delta} />
       </div>
     </section>
   );

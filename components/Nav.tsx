@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { Suspense, type ReactNode } from 'react';
 
 const ICONS: Record<string, ReactNode> = {
   '/': (
@@ -33,6 +33,30 @@ const LINKS = [
   { href: '/trends', label: 'Trends' },
 ];
 
+function NavLinks({ path, query = '' }: { path: string; query?: string }) {
+  return (
+    <>
+      {LINKS.map((l) => (
+        <Link key={l.href} href={`${l.href}${query ? `?${query}` : ''}`} className={`navlink ${path === l.href ? 'active' : ''}`} aria-current={path === l.href ? 'page' : undefined}>
+          <span className="nav-icon">{ICONS[l.href]}</span>
+          <span className="nav-label">{l.label}</span>
+        </Link>
+      ))}
+    </>
+  );
+}
+
+function PreservedNavLinks({ path }: { path: string }) {
+  const params = useSearchParams();
+  const preserve = new URLSearchParams();
+  ['month', 'specialty', 'doctor', 'sel', 'selv'].forEach((key) => {
+    const value = params.get(key);
+    if (value) preserve.set(key, value);
+  });
+  const query = preserve.toString();
+  return <NavLinks path={path} query={query} />;
+}
+
 export default function Nav() {
   const path = usePathname();
   return (
@@ -40,12 +64,9 @@ export default function Nav() {
       <div className="brand">Heal<span>Path</span><span className="nav-badge">BI</span></div>
       <div className="nav-section">Analytics</div>
       <div className="nav-scroll">
-        {LINKS.map((l) => (
-          <Link key={l.href} href={l.href} className={`navlink ${path === l.href ? 'active' : ''}`} aria-current={path === l.href ? 'page' : undefined}>
-            <span className="nav-icon">{ICONS[l.href]}</span>
-            <span className="nav-label">{l.label}</span>
-          </Link>
-        ))}
+        <Suspense fallback={<NavLinks path={path} />}>
+          <PreservedNavLinks path={path} />
+        </Suspense>
       </div>
       <div className="nav-foot">
         <span className="nav-foot-dot" />

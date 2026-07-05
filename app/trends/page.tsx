@@ -1,16 +1,17 @@
 import PageHead from '@/components/PageHead';
 import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
-import { getTrends } from '@/lib/queries';
+import { getTrends, resolveFilters } from '@/lib/queries';
 
-export default async function Trends({ searchParams }: { searchParams: { specialty?: string; doctor?: string } }) {
-  const trends = await getTrends(searchParams.specialty ?? null, searchParams.doctor ?? null);
+export default async function Trends({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string } }) {
+  const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
+  const trends = await getTrends(f.specialty, f.doctor, f.drug, f.disease);
   return (
     <>
       <PageHead title="Trends" />
       <div className="card" style={{ marginBottom: 18 }}>
         <p className="section-title">Average per visit by month</p>
-        <TrendLine points={trends.points} />
+        <TrendLine points={trends.points} delta={trends.delta} />
       </div>
       <div className="card">
         <p className="section-title">Delta vs previous month</p>
