@@ -2,6 +2,7 @@ import BarRank from '@/components/BarRank';
 import FilterBar from '@/components/FilterBar';
 import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
+import AnimatedNumber from '@/components/AnimatedNumber';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
 import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, listMonths, listSpecialties, listDoctors, resolveFilters } from '@/lib/queries';
@@ -11,7 +12,7 @@ function OverviewKpi({ label, value, delta, tone }: { label: string; value: stri
   return (
     <div className="overview-kpi" style={{ '--kpi-tone': tone } as CSSProperties}>
       <div className="overview-kpi-label">{label}</div>
-      <div className="overview-kpi-value">{value}</div>
+      <div className="overview-kpi-value"><AnimatedNumber value={value} /></div>
       {typeof delta === 'number' && <TrendArrow delta={delta} />}
     </div>
   );
@@ -174,6 +175,44 @@ function DoctorComparison({ doctor, k, peer }: { doctor: string; k: Kpis; peer: 
   );
 }
 
+// Executive Summary — up to 3 concise, deterministic observations from data the
+// page already loaded. No AI/LLM, no new SQL.
+function buildExecutiveSummary(k: Kpis, diseases: RankRow[], drugs: { ac: RankRow[]; brands: RankRow[] }, trends: TrendResponse, latestLabs: RankRow[]): string[] {
+  const out: string[] = [];
+  const dm = trends.delta.meds;
+  const utilization = dm > 0.05
+    ? `rose to ${k.avgMeds.toFixed(2)} medications per visit`
+    : dm < -0.05
+      ? `eased to ${k.avgMeds.toFixed(2)} medications per visit`
+      : `remained stable at ${k.avgMeds.toFixed(2)} medications per visit`;
+  out.push(`Medication utilization ${utilization} month-over-month.`);
+  if (latestLabs[0]) out.push(`${latestLabs[0].label} is the leading laboratory investigation.`);
+  if (diseases[0]) out.push(`${diseases[0].label} accounts for the largest share of diagnoses.`);
+  if (out.length < 3 && drugs.ac[0]) {
+    out.push(`${drugs.ac[0].label} is the most prescribed active ingredient.`);
+  }
+  return out.slice(0, 3);
+}
+
+function ExecutiveSummary({ points }: { points: string[] }) {
+  if (!points.length) return null;
+  return (
+    <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, rgba(255,255,255,.97), rgba(248,250,252,.9))' }}>
+      <p className="section-title">Executive Summary</p>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 11 }}>
+        {points.map((text, i) => (
+          <li key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 11, color: 'var(--text)', fontSize: 14.5, fontWeight: 500, lineHeight: 1.5, letterSpacing: '-0.01em' }}>
+            <span aria-hidden style={{ flex: '0 0 auto', marginTop: 2, color: 'var(--accent)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            </span>
+            <span>{text}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default async function Overview({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string } }) {
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
   const [k, diseases, drugs, trends] = await Promise.all([
@@ -202,6 +241,7 @@ export default async function Overview({ searchParams }: { searchParams: { month
   const movers = {
     metrics: calculateMovers(latestMetrics, previousMetrics),
   };
+  const summary = buildExecutiveSummary(k, diseases, drugs, trends, latestDiagnostics.labs);
 
   return (
     <section className="overview-report">
@@ -215,6 +255,8 @@ export default async function Overview({ searchParams }: { searchParams: { month
           <FilterBar months={listMonths()} specialties={listSpecialties()} doctors={listDoctors()} />
         </Suspense>
       </div>
+
+      <ExecutiveSummary points={summary} />
 
       <ExecutiveAlertBar alerts={alerts} />
 

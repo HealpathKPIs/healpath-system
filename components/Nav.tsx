@@ -62,6 +62,16 @@ export default function Nav() {
   return (
     <nav className="nav">
       <div className="brand">Heal<span>Path</span><span className="nav-badge">BI</span></div>
+      <button
+        type="button"
+        aria-label="Open command palette"
+        onClick={() => window.dispatchEvent(new Event('healpath:command-open'))}
+        style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', margin: '4px 0 8px', padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface-2)', color: 'var(--text-muted)', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 500, boxShadow: 'var(--shadow-xs)' }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+        <span style={{ flex: 1, textAlign: 'left' }}>Search…</span>
+        <kbd style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-soft)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '2px 6px' }}>Ctrl K</kbd>
+      </button>
       <div className="nav-section">Analytics</div>
       <div className="nav-scroll">
         <Suspense fallback={<NavLinks path={path} />}>

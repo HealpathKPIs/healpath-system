@@ -1,6 +1,6 @@
 # HealPath Executive BI — Project Context
 
-**Single source of truth for future AI sessions.** Last updated: 2026-07-05 (after Sprint 20).
+**Single source of truth for future AI sessions.** Last updated: 2026-07-05 (after Sprint 23).
 Read this first. Where it disagrees with memory, trust the code — verify claims against the repo before acting.
 
 ---
@@ -10,6 +10,8 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 - **Framework:** Next.js 14.2.5 (App Router), React 18, TypeScript. Server components render pages; API routes are thin wrappers.
 - **Styling:** hand-written CSS design system in `app/globals.css` (semantic classes, premium executive look from Sprint 3). **No Tailwind, no PostCSS.** Do not introduce them.
 - **Charts:** `recharts` for the donut; custom inline SVG for `TrendLine` and `BarRank`.
+- **Command palette (Sprint 23, UI-only):** `components/CommandPalette.tsx` (mounted in `layout.tsx`, opened by Ctrl/Cmd+K or the Nav search button via a `healpath:command-open` window event). It is a **launcher, not a search engine** — it fans out to the existing `/api/search` for all four scopes (doctors/pharmacy/diagnostics/diseases), round-robin merges to 8 results with icon + title + category badge, and on select navigates to the entity's page with the existing `?q=<value>` filter (`/doctors|/pharmacy|/diagnostics|/diseases`). Keyboard: ↑/↓/Enter/Esc; closes on Esc / outside-click / select.
+- **UI primitives (Sprint 21, UI-only):** `components/PageTransition.tsx` wraps the page content in `layout.tsx` (fade + 8px rise, 210ms ease-out, keyed on pathname so it plays on page change only — not filter/search updates; respects `prefers-reduced-motion`). `components/AnimatedNumber.tsx` count-up animates KPI values (parses the already-formatted string, so call sites are unchanged; timed-tick driven so it always settles even when rAF is throttled; animates only on value change) — used by `KpiCard` and the Overview `OverviewKpi`.
 - **Data layer (`lib/queries.ts`)** — every metric function returns a fixed shape and has two sources:
   - **Live:** `lib/pg.ts` → direct **parameterised, read-only** Postgres over the Supabase **Session Pooler**, verified TLS (`certs/prod-ca-2021.crt`, `rejectUnauthorized` on). Bind params only — no string interpolation of user input. Shared `VISIT_FILTER` binds `$1` month, `$2` specialty, `$3` doctor, `$4` drug (visits containing an active ingredient/brand), `$5` disease (visits containing an ICD block); any per-query LIMIT is `$6`. `getTrends` binds `$1` specialty, `$2` doctor, `$3` drug, `$4` disease. `resolveFilters(searchParams, honor)` computes effective filters (selection > URL > default).
   - **Fallback:** `data/snapshot2026.json` (bundled). Used automatically when `hasDb` is false or a live query throws.
@@ -169,6 +171,8 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 | 18B | Fixed Doctor URL refresh/persistence regressions and Trend tooltip hover target | `docs/SPRINT18B_REPORT.md` |
 | 19 | **Universal search** — reusable `SearchBox` autocomplete (ILIKE live / includes snapshot, debounce, min-2, highlight, keyboard nav) + `/api/search` + `?q` page filtering on Diseases/Pharmacy/Diagnostics/Doctors | `docs/SPRINT19_REPORT.md` |
 | 20 | **Executive Insights Panel** on Overview: deterministic alert bar, medication/lab/doctor Biggest Movers, and doctor Smart Comparison | `docs/SPRINT20_REPORT.md` |
+| 21 | **Premium experience (UI only):** page transition (`PageTransition`), animated KPI count-up (`AnimatedNumber`, reused by all KPI cards), and Overview **Executive Summary** (3 deterministic observations) | `docs/SPRINT21_REPORT.md` |
+| 23 | **Executive Command Palette** (`CommandPalette`, Ctrl+K / nav button) — reuses `/api/search` across all scopes and the existing `?q=` page filter to navigate; no new search/routing | `docs/SPRINT23_REPORT.md` |
 
 ---
 
