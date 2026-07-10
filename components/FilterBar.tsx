@@ -1,7 +1,8 @@
 'use client';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useDashboard } from '@/lib/dashboard-context';
+import CompareCenter from './CompareCenter';
 
 const MONTH_LABEL: Record<string, string> = {
   '2026-01': 'Jan 2026', '2026-02': 'Feb 2026', '2026-03': 'Mar 2026',
@@ -14,6 +15,7 @@ export default function FilterBar({ months, specialties, doctors }: { months: st
   const params = useSearchParams();
   const { selection, setSelection } = useDashboard();
   const doctor = params.get('doctor') ?? '';
+  const [compareOpen, setCompareOpen] = useState(false);
 
   useEffect(() => {
     if (doctor) {
@@ -52,6 +54,15 @@ export default function FilterBar({ months, specialties, doctors }: { months: st
         <option value="">All doctors</option>
         {doctors.map((d) => <option key={d} value={d}>{d}</option>)}
       </select>
+      <button
+        type="button"
+        aria-label="Open Compare Center"
+        onClick={() => setCompareOpen(true)}
+        style={{ height: 36, border: '1px solid var(--border)', borderRadius: 9, background: 'var(--surface)', color: 'var(--text)', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 600, padding: '0 12px', whiteSpace: 'nowrap' }}
+      >
+        ⚖ Compare
+      </button>
+      <CompareCenter open={compareOpen} onClose={() => setCompareOpen(false)} months={months} doctors={doctors} />
     </div>
   );
 }

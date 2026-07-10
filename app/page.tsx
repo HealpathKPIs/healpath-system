@@ -2,6 +2,7 @@ import BarRank from '@/components/BarRank';
 import FilterBar from '@/components/FilterBar';
 import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
+import { ExecutiveFeed, ExecutiveScenarioLayer, ExplainButton } from '@/components/ExecutiveExperience';
 import AnimatedNumber from '@/components/AnimatedNumber';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
@@ -101,18 +102,18 @@ function comparisonStatus(diff: number) {
 
 function ExecutiveAlertBar({ alerts }: { alerts: ReturnType<typeof buildExecutiveAlerts> }) {
   const toneStyle: Record<AlertTone, { icon: string; color: string; bg: string }> = {
-    Critical: { icon: '!', color: '#b91c1c', bg: 'linear-gradient(135deg, rgba(254,226,226,.9), rgba(255,255,255,.84))' },
-    Warning: { icon: 'i', color: '#b45309', bg: 'linear-gradient(135deg, rgba(254,243,199,.9), rgba(255,255,255,.84))' },
-    Positive: { icon: '+', color: '#047857', bg: 'linear-gradient(135deg, rgba(209,250,229,.9), rgba(255,255,255,.84))' },
+    Critical: { icon: '!', color: 'var(--danger)', bg: 'linear-gradient(135deg, color-mix(in srgb, var(--danger) 16%, var(--surface)), var(--surface))' },
+    Warning: { icon: 'i', color: 'var(--warning)', bg: 'linear-gradient(135deg, color-mix(in srgb, var(--warning) 16%, var(--surface)), var(--surface))' },
+    Positive: { icon: '+', color: 'var(--success)', bg: 'linear-gradient(135deg, color-mix(in srgb, var(--success) 16%, var(--surface)), var(--surface))' },
   };
   return (
-    <div className="card" style={{ marginBottom: 20, display: 'grid', gap: 14, background: 'linear-gradient(135deg, rgba(255,255,255,.96), rgba(248,250,252,.9))' }}>
+    <div className="card" style={{ marginBottom: 20, display: 'grid', gap: 14, background: 'var(--surface)' }}>
       <p className="section-title">Executive alerts</p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
         {alerts.map((alert) => (
           <div key={`${alert.tone}-${alert.text}`} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '14px 15px', background: toneStyle[alert.tone].bg, boxShadow: '0 8px 18px rgba(15,23,42,.06)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: toneStyle[alert.tone].color, fontWeight: 800 }}>
-              <span style={{ width: 22, height: 22, borderRadius: 999, display: 'inline-grid', placeItems: 'center', background: 'rgba(255,255,255,.82)', border: '1px solid currentColor', fontSize: 12 }}>{toneStyle[alert.tone].icon}</span>
+              <span style={{ width: 22, height: 22, borderRadius: 999, display: 'inline-grid', placeItems: 'center', background: 'var(--surface)', border: '1px solid currentColor', fontSize: 12 }}>{toneStyle[alert.tone].icon}</span>
               {alert.tone}
             </div>
             <div style={{ marginTop: 7, color: 'var(--text-soft)', lineHeight: 1.45, fontWeight: 600 }}>{alert.text}</div>
@@ -129,16 +130,16 @@ function MoversPanel({ movers }: {
   };
 }) {
   const rows = [
-    { direction: '▲ Biggest Increase', item: movers.metrics.increase, tone: '#047857' },
-    { direction: '▼ Biggest Decrease', item: movers.metrics.decrease, tone: '#b91c1c' },
+    { direction: '▲ Biggest Increase', item: movers.metrics.increase, tone: 'var(--success)' },
+    { direction: '▼ Biggest Decrease', item: movers.metrics.decrease, tone: 'var(--danger)' },
   ].filter((row) => row.item);
 
   return (
-    <div className="card" style={{ background: 'linear-gradient(135deg, rgba(255,255,255,.97), rgba(241,245,249,.9))' }}>
+    <div className="card" style={{ background: 'var(--surface)' }}>
       <p className="section-title">Biggest movers</p>
       <div style={{ display: 'grid', gap: 12 }}>
         {rows.map((row) => (
-          <div key={row.direction} style={{ display: 'grid', gridTemplateColumns: '150px 1fr auto', gap: 12, alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '13px 14px', background: 'rgba(255,255,255,.78)' }}>
+          <div key={row.direction} style={{ display: 'grid', gridTemplateColumns: '150px 1fr auto', gap: 12, alignItems: 'center', border: '1px solid var(--border)', borderRadius: 8, padding: '13px 14px', background: 'var(--surface-2)' }}>
             <span style={{ color: row.tone, fontWeight: 800 }}>{row.direction}</span>
             <span><b>{row.item!.label}</b><br /><small style={{ color: 'var(--text-soft)', fontWeight: 700 }}>Latest vs previous month</small></span>
             <span style={{ textAlign: 'right', color: 'var(--text-soft)' }}>{formatMoverValue(row.item!.currentValue)} vs {formatMoverValue(row.item!.previousValue)}<br /><b style={{ color: row.tone }}>{formatDelta(row.item!.delta)}</b></span>
@@ -152,9 +153,9 @@ function MoversPanel({ movers }: {
 function DoctorComparison({ doctor, k, peer }: { doctor: string; k: Kpis; peer: Kpis }) {
   const diff = k.avgMeds - peer.avgMeds;
   const status = comparisonStatus(diff);
-  const statusColor = diff > 0.05 ? '#047857' : diff < -0.05 ? '#b91c1c' : '#64748b';
+  const statusColor = diff > 0.05 ? 'var(--success)' : diff < -0.05 ? 'var(--danger)' : 'var(--text-muted)';
   return (
-    <div className="card" style={{ background: 'linear-gradient(135deg, rgba(239,246,255,.88), rgba(255,255,255,.96))' }}>
+    <div className="card" style={{ background: 'var(--surface)' }}>
       <p className="section-title">Smart comparison</p>
       <div style={{ display: 'grid', gap: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -162,13 +163,13 @@ function DoctorComparison({ doctor, k, peer }: { doctor: string; k: Kpis; peer: 
             <div style={{ color: 'var(--text-soft)', fontWeight: 700, fontSize: 12 }}>Doctor</div>
             <b style={{ fontSize: 20 }}>{doctor}</b>
           </div>
-          <span style={{ borderRadius: 999, padding: '7px 10px', color: statusColor, background: 'rgba(255,255,255,.82)', border: '1px solid currentColor', fontWeight: 800 }}>{status}</span>
+          <span style={{ borderRadius: 999, padding: '7px 10px', color: statusColor, background: 'var(--surface)', border: '1px solid currentColor', fontWeight: 800 }}>{status}</span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'rgba(255,255,255,.78)' }}>Visits<br /><b>{k.visits.toLocaleString()}</b></span>
-          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'rgba(255,255,255,.78)' }}>Avg Medications / Visit<br /><b>{k.avgMeds.toFixed(2)}</b></span>
-          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'rgba(255,255,255,.78)' }}>Peer Average<br /><b>{peer.avgMeds.toFixed(2)}</b></span>
-          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'rgba(255,255,255,.78)' }}>Difference<br /><b style={{ color: statusColor }}>{diff > 0 ? '+' : ''}{diff.toFixed(2)}</b></span>
+          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'var(--surface-2)' }}>Visits<br /><b>{k.visits.toLocaleString()}</b></span>
+          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'var(--surface-2)' }}>Avg Medications / Visit<br /><b>{k.avgMeds.toFixed(2)}</b></span>
+          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'var(--surface-2)' }}>Peer Average<br /><b>{peer.avgMeds.toFixed(2)}</b></span>
+          <span style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, background: 'var(--surface-2)' }}>Difference<br /><b style={{ color: statusColor }}>{diff > 0 ? '+' : ''}{diff.toFixed(2)}</b></span>
         </div>
       </div>
     </div>
@@ -197,7 +198,7 @@ function buildExecutiveSummary(k: Kpis, diseases: RankRow[], drugs: { ac: RankRo
 function ExecutiveSummary({ points }: { points: string[] }) {
   if (!points.length) return null;
   return (
-    <div className="card" style={{ marginBottom: 20, background: 'linear-gradient(135deg, rgba(255,255,255,.97), rgba(248,250,252,.9))' }}>
+    <div className="card" style={{ marginBottom: 20, background: 'var(--surface)' }}>
       <p className="section-title">Executive Summary</p>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 11 }}>
         {points.map((text, i) => (
@@ -245,6 +246,7 @@ export default async function Overview({ searchParams }: { searchParams: { month
 
   return (
     <section className="overview-report">
+      <ExecutiveScenarioLayer k={k} doctor={f.doctor} peerKpis={peerKpis} drugs={drugs} diagnostics={latestDiagnostics} trends={trends} />
       <div className="overview-header">
         <div>
           <p className="overview-eyebrow">HealPath BI Report</p>
@@ -275,19 +277,30 @@ export default async function Overview({ searchParams }: { searchParams: { month
 
       <div className="overview-visual-grid">
         <div className="overview-visual">
-          <p className="section-title">Top 5 disease blocks</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+            <p className="section-title" style={{ margin: 0 }}>Top 5 disease blocks</p>
+            <ExplainButton title="Top 5 disease blocks" rows={diseases} />
+          </div>
           <BarRank data={diseases} color="#635bff" kind="disease" />
         </div>
         <div className="overview-visual">
-          <p className="section-title">Top 5 active ingredients</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+            <p className="section-title" style={{ margin: 0 }}>Top 5 active ingredients</p>
+            <ExplainButton title="Top 5 active ingredients" rows={drugs.ac.slice(0, 5)} />
+          </div>
           <BarRank data={drugs.ac.slice(0, 5)} color="#16a36f" kind="drug" />
         </div>
       </div>
 
       <div className="overview-visual overview-trend">
-        <p className="section-title">Average per visit by month</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+          <p className="section-title" style={{ margin: 0 }}>Average per visit by month</p>
+          <ExplainButton title="Average per visit by month" trend={trends.points} />
+        </div>
         <TrendLine points={trends.points} delta={trends.delta} />
       </div>
+
+      <ExecutiveFeed k={k} drugs={drugs} diagnostics={latestDiagnostics} trends={trends} doctor={f.doctor} />
     </section>
   );
 }

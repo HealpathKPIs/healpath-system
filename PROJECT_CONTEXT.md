@@ -1,6 +1,6 @@
 # HealPath Executive BI — Project Context
 
-**Single source of truth for future AI sessions.** Last updated: 2026-07-05 (after Sprint 23).
+**Single source of truth for future AI sessions.** Last updated: 2026-07-10 (after Sprint 28B).
 Read this first. Where it disagrees with memory, trust the code — verify claims against the repo before acting.
 
 ---
@@ -9,7 +9,11 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 
 - **Framework:** Next.js 14.2.5 (App Router), React 18, TypeScript. Server components render pages; API routes are thin wrappers.
 - **Styling:** hand-written CSS design system in `app/globals.css` (semantic classes, premium executive look from Sprint 3). **No Tailwind, no PostCSS.** Do not introduce them.
+- **Theme system (Sprint 28A):** light + dark, driven entirely by the CSS variables. `app/globals.css` has a `html[data-theme="dark"]` block that remaps every design token (surfaces/text/border/accent/semantic/**chart palette**/shadows) plus overrides for the few rules that hardcoded light colors. `components/ThemeManager.tsx` (mounted in `layout.tsx`) reads `hp-settings.appearance` (`light`/`dark`/`system`) and sets `<html data-theme>`; it reacts to the Settings live event `healpath:settings-changed`, cross-tab `storage`, and (in System mode) the OS `prefers-color-scheme`. An inline no-flash script in `layout.tsx <head>` applies the theme before first paint (`<html suppressHydrationWarning>`). Settings → Appearance switches instantly. **When adding UI, use the CSS variables — do NOT hardcode hex colors, or it won't theme.** Known residual light spots (transient popovers, inline hex predating the theme): `SearchBox` autocomplete dropdown and `Donut` hover tooltip — small follow-up.
+- **Premium motion system (Sprint 28B):** centralized in `app/globals.css` motion tokens/keyframes. Page transitions fade + slide from `translateY(12px)` over 220ms; Overview KPI cards stagger at 0/60/120/180/240ms and use the existing card components; KPI hover lifts `-2px` with stronger shadow and accent border. Drawers/palette are normalized to 200ms fade + slide with no scale. Chart containers use a first-render-only entrance (opacity 0 to 1, scale .98 to 1, 300ms); `PageTransition` stores `hp-chart-motion-seen` in `sessionStorage` so later filter/search refreshes stay quiet. Route loading uses skeletons for KPI cards, charts, and Executive Feed. All motion respects `prefers-reduced-motion`.
 - **Charts:** `recharts` for the donut; custom inline SVG for `TrendLine` and `BarRank`.
+- **Sprint 27 UX notes:** the Sprint-24 Executive Scenario full-height drawer is now a **compact floating panel** (bottom-right, `ExecutiveScenarioLayer` in `components/ExecutiveExperience.tsx`) — shows only while an entity is selected; its **X clears the selection** (context + `?sel/?selv`, and `?doctor` when doctor-driven). Browser-local preferences (no server persistence): `hp-settings` (`{appearance, animations, showFeed}` — written by `/settings`, `showFeed` read by `ExecutiveFeed`) and `hp-upload-history` (latest 10 imports, written by `/admin/import`, shown as the Upload History table). `/settings` shows Version (package.json) and Database Status via the existing `/api/kpis`.
+- **Compare Center (Sprint 25, UI-only):** `components/CompareCenter.tsx` — a right-side drawer opened by the **⚖ Compare** button rendered inside `FilterBar` (so it sits beside the global filters on every page). Supports exactly Doctor-vs-Doctor, Medication-vs-Medication, Month-vs-Month. Each side's profile is fetched from the **existing API routes only** (`/api/kpis`, `/api/drugs`, `/api/diagnostics`, `/api/trends`, `/api/specialties`); unavailable metrics are hidden, never fabricated — medication compare therefore shows **Prescriptions** only (the existing APIs accept no medication filter). Quick Actions navigate via the existing filters (`?doctor=`, `?month=`, `?sel=drug&selv=`).
 - **Command palette (Sprint 23, UI-only):** `components/CommandPalette.tsx` (mounted in `layout.tsx`, opened by Ctrl/Cmd+K or the Nav search button via a `healpath:command-open` window event). It is a **launcher, not a search engine** — it fans out to the existing `/api/search` for all four scopes (doctors/pharmacy/diagnostics/diseases), round-robin merges to 8 results with icon + title + category badge, and on select navigates to the entity's page with the existing `?q=<value>` filter (`/doctors|/pharmacy|/diagnostics|/diseases`). Keyboard: ↑/↓/Enter/Esc; closes on Esc / outside-click / select.
 - **UI primitives (Sprint 21, UI-only):** `components/PageTransition.tsx` wraps the page content in `layout.tsx` (fade + 8px rise, 210ms ease-out, keyed on pathname so it plays on page change only — not filter/search updates; respects `prefers-reduced-motion`). `components/AnimatedNumber.tsx` count-up animates KPI values (parses the already-formatted string, so call sites are unchanged; timed-tick driven so it always settles even when rAF is throttled; animates only on value change) — used by `KpiCard` and the Overview `OverviewKpi`.
 - **Data layer (`lib/queries.ts`)** — every metric function returns a fixed shape and has two sources:
@@ -18,15 +22,17 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 - **API routes** (`app/api/*`): call the same `lib/queries` functions → **API contracts are stable regardless of live/snapshot source.**
 - **`lib/supabase.ts`** (PostgREST client) and the exported `SQL` object in `lib/queries.ts` are now **dead code** (the `exec_sql` path was abandoned — see Decisions). Left in place; do not depend on them.
 - **Auth:** login page sets a client-side cookie `hp_auth=1` (not real authentication). `DASHBOARD_PASSWORD` env exists but the flow is cosmetic.
-- **Import tooling:** `scripts/import.ts` (original supabase-js loader, superseded) and `scripts/pg-import.mjs` (direct-pg loader used in Sprint 6).
+- **Import tooling (Sprint 26 layout):** the importer's parse/clean/load/validate logic lives in **`lib/import-core.mjs`** — the **single source of truth**. `scripts/pg-import.mjs` is a thin CLI wrapper over it; the **Admin → Data Import** UI (`/admin/import`, in the sidebar nav) uses the same core via the additive `POST /api/admin/import` route (`mode=preview` parses only — no DB write; `mode=import` runs the load and streams NDJSON progress). `scripts/import.ts` is the original superseded supabase-js loader. ⚠️ Import semantics unchanged: visits are PK-deduped (`on conflict do nothing`) but **fact rows are appended** — re-importing an already-loaded extract duplicates facts (the UI warns about this).
 
 ### Key files
 | Path | Role |
 |---|---|
 | `lib/queries.ts` | All metric functions (live + snapshot fallback) |
 | `lib/pg.ts` | Pooled direct Postgres, verified TLS |
-| `app/globals.css` | Entire design system (frozen since Sprint 3) |
-| `scripts/pg-import.mjs` | Data loader + validation |
+| `app/globals.css` | Entire design system implementation (frozen since Sprint 3) |
+| `HEALPATH_DESIGN_SYSTEM.md` | Design system **documentation** (Sprint 27B) — tokens, component/dashboard/interaction rules; keep in sync with `globals.css` |
+| `lib/import-core.mjs` | Importer single source of truth (parse/clean/load/validate) |
+| `scripts/pg-import.mjs` | CLI wrapper over `import-core` |
 | `certs/prod-ca-2021.crt` | Supabase CA (needed at runtime for TLS) |
 | `.env.local` | `DATABASE_URL` (pooler), Supabase URL + keys — secrets |
 | `data/snapshot2026.json` | Fallback dataset (mirrors the Power BI model) |
@@ -59,6 +65,8 @@ Read this first. Where it disagrees with memory, trust the code — verify claim
 **Universal search (Sprint 19):** one reusable `components/SearchBox.tsx` (client) on Diseases / Pharmacy / Diagnostics / Doctors. Debounced 300ms, min 2 chars → `GET /api/search?scope&q` → `searchOptions(scope, q)` (SQL **ILIKE** live / snapshot **includes** fallback). Dropdown shows up to 8 hits with **highlighted** match + **keyboard nav** (↑↓/Enter/Esc). Selecting a hit sets `?q=<value>` (preserving other params); pages read it via `resolveFilters` → `Filters.search` and the search-enabled queries filter with `ILIKE $7`. Search scopes: Diseases = `icd_desc` + `diseases` (ICD code); Pharmacy = `ac`/`brand`/`medications`; Diagnostics = `lab_fact.tests`/`scan_fact.tests`; Doctors = `practitioner_name`/`doctor_specialty`. The old `DataTable` client-side search was removed on Diseases/Doctors (SearchBox replaces it). `?q` is **not** preserved across `Nav` (page-local search).
 
 **Executive insights (Sprint 20):** Overview now renders a deterministic executive insights section above the KPI grid. It contains an alert bar generated from already loaded Overview data using only doctors, medications, labs, visits, Avg Medications / Visit, and Avg Labs / Visit. The former "doctors contributed" alert was removed and replaced with a Vitamin D lab insight that reuses existing `getDiagnostics` live data, showing current requests and Delta % when latest/previous month data is available. Biggest Movers ignores diseases and compares only Avg Medications / Visit, Avg Labs / Visit, and Doctors for the latest trend month vs the previous trend month, reusing `getTrends` data plus existing month-scoped `getKpis` calls. Smart Comparison appears only when `doctor` is selected; its calculation is unchanged (`getKpis(f)` vs `getKpis({ ...f, doctor: null })`) and its presentation was polished with premium cards/status chips. No new SQL, routes, API routes, database tables, filters, auth changes, or AI generation were added.
+
+**Executive experience (Sprint 24, UI-only):** Overview now has one client presentation layer (`components/ExecutiveExperience.tsx`) that reuses existing `DashboardContext` and already-loaded Overview data. It adds a right-side Executive Scenario drawer for clicked Medication/Laboratory feed entities and existing chart selections, deterministic `Explain` popovers for the major Overview charts, and a compact Executive Feed after the charts. No SQL, API, backend, routing, filter, database, or query changes were added.
 
 **Page honor matrix (which cross-filter each page applies):**
 | Page | month | specialty | doctor | drug | disease |
@@ -120,7 +128,7 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 
 ## 6. Business rules (must be preserved)
 
-1. **2026 reporting window** — the Power BI model (and every live metric) is scoped to `month_year like '2026-%'` = **77,306 visits**. The DB also holds 2025-10/11/12 (9,023 visits) which the model **excludes**. Never drop this scope.
+1. **2026 reporting window** — the Power BI model (and every live metric) is scoped to `month_year like '2026-%'`. The DB also holds 2025 rows which the model **excludes**. Never drop this scope. (The window's visit count was **77,306** at the original import; it is data-dependent — **77,738** observed on 2026-07-09 after additional data was imported.)
 2. **DAX → SQL measures:** Visits = `count(distinct visit_id)`; Patients = `count(distinct patient_id)`; Avg Meds/Visit = `count(drug brand, non-null) / distinct visits`; Avg Labs/Scans analogous with `lab_fact.tests` / `scan_fact.tests`.
 3. **VisitID cleaning:** trim + collapse internal whitespace.
 4. **month_year** derived from `Year` + `MonthName`; corrupt `Year < 2000` (1970 block) folded to 2026; `prescription_date` nulled for those rows.
@@ -173,6 +181,13 @@ FK integrity clean (0 orphans post-load); 0 NULL `visit_id`.
 | 20 | **Executive Insights Panel** on Overview: deterministic alert bar, medication/lab/doctor Biggest Movers, and doctor Smart Comparison | `docs/SPRINT20_REPORT.md` |
 | 21 | **Premium experience (UI only):** page transition (`PageTransition`), animated KPI count-up (`AnimatedNumber`, reused by all KPI cards), and Overview **Executive Summary** (3 deterministic observations) | `docs/SPRINT21_REPORT.md` |
 | 23 | **Executive Command Palette** (`CommandPalette`, Ctrl+K / nav button) — reuses `/api/search` across all scopes and the existing `?q=` page filter to navigate; no new search/routing | `docs/SPRINT23_REPORT.md` |
+| 24 | **Executive Experience** on Overview: scenario drawer, deterministic Explain controls, and Executive Feed using existing data only | `docs/SPRINT24_REPORT.md` |
+| 25 | **Executive Compare Center** (`CompareCenter` drawer, ⚖ Compare button in `FilterBar`) — Doctor/Medication/Month vs comparisons built from the existing API routes; Quick Actions reuse existing routing/filters | `docs/SPRINT25_REPORT.md` |
+| 26 | **Data Import Center** — Admin → Data Import UI (`/admin/import`) over the existing importer; logic extracted to `lib/import-core.mjs` (single source of truth shared with `scripts/pg-import.mjs`); additive `/api/admin/import` (preview = parse only, import = streamed NDJSON progress) | `docs/SPRINT26_REPORT.md` |
+| 27A | **Executive UX**: scenario drawer → compact floating panel (X clears selection); Admin **Upload History** (localStorage, latest 10); **Settings** page (`/settings` — Account placeholder, Appearance, Dashboard toggles incl. functional Show-Executive-Feed, About with live DB status) | `docs/SPRINT27_REPORT.md` |
+| 27B | **Design system documentation** — `HEALPATH_DESIGN_SYSTEM.md` (docs only, no code): brand philosophy, color/typography/spacing/radius/elevation/motion tokens (documenting the shipped `globals.css` system), component + dashboard + interaction + a11y rules, future-component placeholders. Inspired by an external automotive design doc (`DESIGN.md`), fully rebranded to HealPath | `docs/SPRINT27_REPORT.md` (Part B) |
+| 28A | **Theme system (Dark Mode fix)** — `html[data-theme="dark"]` token remap in `globals.css`; `ThemeManager` applies the Settings Light/Dark/System preference (localStorage, live, OS-aware) with a no-flash `<head>` script; Overview insight cards + Executive Feed/Explain de-hardcoded to variables | `docs/SPRINT28A_REPORT.md` |
+| 28B | **Premium Motion System** - shared motion tokens/keyframes for page transitions, Overview KPI stagger + hover, drawer/palette entrance, first-render chart entrance, skeleton loading placeholders, and restrained micro-interactions. No backend, SQL, API, routing, business logic, or layout redesign changes. | `docs/SPRINT28B_REPORT.md` |
 
 ---
 

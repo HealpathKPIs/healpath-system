@@ -55,6 +55,14 @@
   --shadow-lg: 0 24px 60px rgba(15, 23, 42, .12), 0 4px 14px rgba(15, 23, 42, .06);
   --ring: 0 0 0 4px rgba(99, 102, 241, .14);
 
+  /* Motion */
+  --ease-premium: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-micro: 120ms ease;
+  --motion-hover: 180ms ease;
+  --motion-structural: 220ms var(--ease-premium);
+  --motion-drawer: 200ms var(--ease-premium);
+  --motion-chart: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
   /* Type */
   --font: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -89,6 +97,29 @@ body {
 
 a { color: inherit; text-decoration: none; }
 button, input, select { font: inherit; }
+button {
+  transition:
+    background-color var(--motion-micro),
+    border-color var(--motion-micro),
+    color var(--motion-micro),
+    box-shadow var(--motion-micro),
+    transform var(--motion-micro),
+    filter var(--motion-micro);
+}
+input, select, textarea {
+  transition:
+    background-color var(--motion-micro),
+    border-color var(--motion-micro),
+    box-shadow var(--motion-micro),
+    color var(--motion-micro);
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: var(--ring);
+}
 ::selection { background: rgba(99, 102, 241, .18); }
 
 /* Scrollbars */
@@ -319,7 +350,7 @@ button, input, select { font: inherit; }
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
   background-repeat: no-repeat;
   background-position: right 11px center;
-  transition: background-color .14s ease, border-color .14s ease, box-shadow .14s ease;
+  transition: background-color var(--motion-micro), border-color var(--motion-micro), box-shadow var(--motion-micro);
 }
 .filters select:hover { background-color: var(--surface-2); }
 .filters select:focus { border-color: var(--accent-border); background-color: #fff; box-shadow: var(--ring); }
@@ -343,7 +374,7 @@ button, input, select { font: inherit; }
   border-radius: var(--r-md);
   padding: 22px 24px;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow .2s ease, border-color .2s ease, transform .2s ease;
+  transition: box-shadow var(--motion-hover), border-color var(--motion-hover), transform var(--motion-hover);
 }
 .card:hover {
   border-color: var(--border-strong);
@@ -357,6 +388,11 @@ button, input, select { font: inherit; }
   flex-direction: column;
   justify-content: space-between;
   padding: 20px 22px;
+}
+.kpi-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-md);
 }
 .kpi-card::before {
   content: "";
@@ -500,7 +536,7 @@ button, input, select { font: inherit; }
     var(--surface);
   padding: 17px 18px 16px;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow .2s ease, transform .2s ease, border-color .2s ease;
+  transition: box-shadow var(--motion-hover), transform var(--motion-hover), border-color var(--motion-hover);
 }
 .overview-kpi::before {
   content: "";
@@ -512,7 +548,7 @@ button, input, select { font: inherit; }
 .overview-kpi:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
-  border-color: var(--border-strong);
+  border-color: var(--accent-border);
 }
 .overview-kpi-label {
   color: var(--text-muted);
@@ -606,7 +642,7 @@ button, input, select { font: inherit; }
   min-width: 6px;
   border-radius: inherit;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35);
-  transition: width .5s cubic-bezier(.4, 0, .2, 1);
+  transition: width 500ms cubic-bezier(.4, 0, .2, 1);
 }
 
 /* ===========================================================================
@@ -685,8 +721,8 @@ th {
 th:first-child { border-top-left-radius: var(--r-md); }
 th:last-child { border-top-right-radius: var(--r-md); }
 th:hover { color: var(--text); background: var(--surface-3); }
-tbody tr { transition: background .12s ease; }
-tbody tr:hover { background: #f7f8ff; }
+tbody tr { transition: background-color var(--motion-micro); }
+tbody tr:hover { background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
 tbody tr:last-child td { border-bottom: 0; }
 td { color: #334155; font-weight: 450; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -717,7 +753,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
   background-repeat: no-repeat;
   background-position: left 12px center;
-  transition: border-color .14s ease, box-shadow .14s ease, background-color .14s ease;
+  transition: border-color var(--motion-micro), box-shadow var(--motion-micro), background-color var(--motion-micro);
 }
 .search::placeholder { color: var(--text-soft); }
 .search:focus { border-color: var(--accent-border); box-shadow: var(--ring); }
@@ -803,6 +839,88 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 
 /* ===========================================================================
+   Premium motion system (Sprint 28B)
+   ========================================================================== */
+.page-enter {
+  animation: hpPageEnter var(--motion-structural) both;
+  will-change: opacity, transform;
+}
+
+@keyframes hpPageEnter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.overview-kpi {
+  animation: hpKpiEnter var(--motion-structural) both;
+}
+.overview-kpi:nth-child(1) { animation-delay: 0ms; }
+.overview-kpi:nth-child(2) { animation-delay: 60ms; }
+.overview-kpi:nth-child(3) { animation-delay: 120ms; }
+.overview-kpi:nth-child(4) { animation-delay: 180ms; }
+.overview-kpi:nth-child(5) { animation-delay: 240ms; }
+
+@keyframes hpKpiEnter {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+html:not([data-motion-seen="true"]) .overview-visual,
+html:not([data-motion-seen="true"]) .card:has(.trend-chart),
+html:not([data-motion-seen="true"]) .card:has(.rank-list) {
+  animation: hpChartEnter var(--motion-chart) both;
+}
+
+@keyframes hpChartEnter {
+  from { opacity: 0; transform: scale(.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.compare-panel {
+  animation: hpDrawerRightIn var(--motion-drawer) both !important;
+}
+.cmdk-panel {
+  animation: hpPaletteIn var(--motion-drawer) both !important;
+}
+.scenario-pop {
+  animation: hpScenarioIn var(--motion-drawer) both !important;
+}
+
+@keyframes hpDrawerRightIn {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes hpPaletteIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes hpScenarioIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+  .page-enter,
+  .overview-kpi,
+  .overview-visual,
+  .card:has(.trend-chart),
+  .card:has(.rank-list),
+  .compare-panel,
+  .cmdk-panel,
+  .scenario-pop {
+    animation: none !important;
+  }
+}
+
+/* ===========================================================================
    Responsive
    ========================================================================== */
 @media (max-width: 1180px) {
@@ -850,3 +968,97 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 460px) {
   .overview-kpi-grid { grid-template-columns: 1fr; }
 }
+
+/* ===========================================================================
+   Dark theme (Sprint 28A)
+   Applied via html[data-theme="dark"], set by components/ThemeManager from the
+   Settings appearance preference (light / dark / system). Light mode is the
+   default :root at the top of this file; this block only (a) remaps the design
+   tokens and (b) fixes the handful of rules that hardcoded light colors. The
+   whole app already draws from these CSS variables, so remapping them themes
+   every page, card, drawer, dialog, table, filter, and chart in one place.
+   ========================================================================== */
+:root { color-scheme: light; }
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces & neutrals */
+  --bg: #0b0f17;
+  --bg-soft: #0f1420;
+  --surface: #151c28;
+  --surface-2: #1b2331;
+  --surface-3: #232d3e;
+  --sidebar: #10151f;
+  --sidebar-soft: #131a26;
+
+  /* Hairline borders */
+  --border: #29323f;
+  --border-soft: #212a37;
+  --border-strong: #3a4657;
+
+  /* Text */
+  --text: #e6eaf2;
+  --text-strong: #f5f8fc;
+  --text-muted: #98a5b8;
+  --text-soft: #6d7a8d;
+
+  /* Brand + semantic tones (brightened for contrast on a dark canvas) */
+  --accent: #7c83ff;
+  --accent-strong: #6366f1;
+  --accent-ink: #c7ccff;
+  --accent-soft: #20264a;
+  --accent-border: #343d66;
+
+  /* Chart palette — lifted so series read clearly on dark */
+  --meds: #818cf8;
+  --labs: #34d399;
+  --scans: #60a5fa;
+  --danger: #fb7185;
+  --danger-soft: #3a1a23;
+  --success: #34d399;
+  --success-soft: #0f2a20;
+  --warning: #fbbf24;
+
+  /* Elevation — deeper so cards separate from the canvas */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .45), 0 1px 3px rgba(0, 0, 0, .3);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, .5), 0 2px 6px rgba(0, 0, 0, .35);
+  --shadow-lg: 0 28px 64px rgba(0, 0, 0, .6), 0 6px 18px rgba(0, 0, 0, .45);
+  --ring: 0 0 0 4px rgba(124, 131, 255, .28);
+}
+
+/* Rules in this file that hardcoded a light color — remapped for dark only */
+html[data-theme="dark"] body {
+  background:
+    radial-gradient(1200px 480px at 12% -8%, rgba(124, 131, 255, .12), transparent 60%),
+    radial-gradient(1000px 420px at 110% 0%, rgba(52, 211, 153, .07), transparent 55%),
+    linear-gradient(180deg, #0d121c 0%, var(--bg) 30rem);
+  background-attachment: fixed;
+}
+html[data-theme="dark"] ::selection { background: rgba(124, 131, 255, .32); }
+html[data-theme="dark"] * { scrollbar-color: #3a4657 transparent; }
+html[data-theme="dark"] *::-webkit-scrollbar-thumb { background: #3a4657; background-clip: content-box; }
+html[data-theme="dark"] *::-webkit-scrollbar-thumb:hover { background: #4a5872; background-clip: content-box; }
+
+html[data-theme="dark"] .navlink { color: #aab6c8; }
+html[data-theme="dark"] .navlink.active {
+  background: linear-gradient(180deg, var(--surface-2), var(--accent-soft));
+}
+html[data-theme="dark"] .filters { background: rgba(21, 28, 40, .7); }
+html[data-theme="dark"] .filters select:focus { background-color: var(--surface); }
+html[data-theme="dark"] .filters select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2398a5b8' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+}
+html[data-theme="dark"] .search {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236d7a8d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+}
+html[data-theme="dark"] td { color: #c3ccda; }
+html[data-theme="dark"] tbody tr:hover { background: rgba(124, 131, 255, .08); }
+html[data-theme="dark"] .skeleton-line,
+html[data-theme="dark"] .skeleton-block {
+  background: linear-gradient(90deg, #1b2331 25%, #232d3e 37%, #1b2331 63%);
+  background-size: 400% 100%;
+}
+html[data-theme="dark"] .loginbox { background: rgba(21, 28, 40, .92); }
+html[data-theme="dark"] .loginbox input:focus { background: var(--surface); }

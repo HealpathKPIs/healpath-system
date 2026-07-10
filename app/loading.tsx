@@ -21,6 +21,17 @@ export default function Loading() {
         <div className="skeleton-card"><div className="skeleton-block" /></div>
       </div>
       <div className="skeleton-card"><div className="skeleton-block" /></div>
+      <div className="skeleton-card" style={{ marginTop: 20, minHeight: 250 }}>
+        <div className="skeleton-line" style={{ width: 160, marginBottom: 18 }} />
+        <div style={{ display: 'grid', gap: 10 }}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '32px 1fr', gap: 12, alignItems: 'center' }}>
+              <div className="skeleton-line" style={{ width: 32, height: 32 }} />
+              <div className="skeleton-line" style={{ width: 'min(100%, 520px)', height: 18 }} />
+            </div>
+          ))}
+        </div>
+      </div>
     </>
   );
 }
