@@ -1061,8 +1061,40 @@ interface ChronicRow {
   consultant: string;
 }
 
+const CHRONIC_EXCLUDED_CONSULTANTS = new Set([
+  '1 Months',
+  '2 Month',
+  '3 Months',
+  '4 Months',
+  '5 Months',
+  '6 Months',
+]);
+
 const CHRONIC_CONSULTANT =
   "coalesce(nullif(row_data->>'Consultant',''), nullif(row_data->>'consultant',''), nullif(row_data->>'Doctor',''), nullif(row_data->>'Practitioner',''), 'Unassigned')";
+
+const CHRONIC_CARE_CONSULTANT =
+  "coalesce(nullif(btrim(row_data->>'Consultant Name'), ''), 'Unassigned')";
+
+function chronicConsultantOptions(values: Array<string | null | undefined>) {
+  const consultants = new Set<string>();
+  let hasUnassigned = false;
+
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed) continue;
+    if (trimmed === 'Unassigned') {
+      hasUnassigned = true;
+      continue;
+    }
+    if (CHRONIC_EXCLUDED_CONSULTANTS.has(trimmed)) continue;
+    consultants.add(trimmed);
+  }
+
+  const options = Array.from(consultants).sort((a, b) => a.localeCompare(b));
+  if (hasUnassigned) options.push('Unassigned');
+  return options;
+}
 
 const CHRONIC_ISSUE_CATALOG_HINTS = [
   'Moderate interaction',
@@ -1866,10 +1898,10 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
   try {
     const rows = await dbQuery<ChronicRow>(`
       with chronic as (
-        select 'pre'::text as phase, week, month, btrim(patient_id) as patient_id, recommendation, issue, medication_name, row_data, ${CHRONIC_CONSULTANT} as consultant
+        select 'pre'::text as phase, week, month, btrim(patient_id) as patient_id, recommendation, issue, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
         from healpath.chronic_pre
         union all
-        select 'post'::text as phase, week, month, btrim(patient_id) as patient_id, recommendation, issue, medication_name, row_data, ${CHRONIC_CONSULTANT} as consultant
+        select 'post'::text as phase, week, month, btrim(patient_id) as patient_id, recommendation, issue, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
         from healpath.chronic_post
       )
       select phase, week, month, patient_id, recommendation, issue, medication_name, consultant,
@@ -1909,7 +1941,7 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
     const options = {
       periods: chronicPeriodsForWeeks(calendar, presentWeeks).map((entry) => entry.period),
       weeks: presentWeeks,
-      consultants: uniq(filteredRows.map((row) => row.consultant)),
+      consultants: chronicConsultantOptions(filteredRows.map((row) => row.consultant)),
       recommendations: uniq(filteredRows.map((row) => canonicalizeRecommendation(row.recommendation))),
       issues: uniq(filteredRows.flatMap((row) => issueValues(row))),
       medications: medicationOptions,
@@ -2078,10 +2110,10 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
 
 const CHRONIC_PAGE_CTE = `
   with chronic as (
-    select 'pre'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data, ${CHRONIC_CONSULTANT} as consultant
+    select 'pre'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
     from healpath.chronic_pre
     union all
-    select 'post'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data, ${CHRONIC_CONSULTANT} as consultant
+    select 'post'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
     from healpath.chronic_post
   )`;
 
@@ -2469,7 +2501,7 @@ async function loadChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
     const options: ChronicOverviewData['options'] = {
       periods: chronicPeriodsForWeeks(calendar, presentWeeks).map((entry) => entry.period),
       weeks: presentWeeks,
-      consultants: uniq(dimRows.filter((row) => row.kind === 'consultant').map((row) => row.value)),
+      consultants: chronicConsultantOptions(dimRows.filter((row) => row.kind === 'consultant').map((row) => row.value)),
       recommendations: uniq(recommendationRows.map((row) => canonicalizeRecommendation(row.raw_value))),
       issues: uniq(issueRows.map((row) => canonicalizeIssue(row.raw_value))),
       medications: uniq(dimRows.filter((row) => row.kind === 'medication').map((row) => row.value)),
