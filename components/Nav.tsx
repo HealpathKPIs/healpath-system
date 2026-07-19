@@ -22,6 +22,15 @@ const ICONS: Record<string, ReactNode> = {
   '/trends': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></svg>
   ),
+  '/performance': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
+  ),
+  '/patient-360': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" /><circle cx="9.5" cy="7" r="4" /><path d="M19 8v6" /><path d="M22 11h-6" /></svg>
+  ),
+  '/chronic': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" /><path d="M3.5 12H8l1.5-3 3 6 1.5-3h6.5" /></svg>
+  ),
   '/admin/import': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></svg>
   ),
@@ -37,6 +46,9 @@ const LINKS = [
   { href: '/doctors', label: 'Doctor & Specialty' },
   { href: '/diagnostics', label: 'Labs & Scans' },
   { href: '/trends', label: 'Trends' },
+  { href: '/chronic', label: 'Chronic Care' },
+  { href: '/patient-360', label: 'Patient 360' },
+  { href: '/performance', label: 'Performance Matrix' },
   { href: '/admin/import', label: 'Data Import' },
   { href: '/settings', label: 'Settings' },
 ];
@@ -57,7 +69,9 @@ function NavLinks({ path, query = '' }: { path: string; query?: string }) {
 function PreservedNavLinks({ path }: { path: string }) {
   const params = useSearchParams();
   const preserve = new URLSearchParams();
-  ['month', 'specialty', 'doctor', 'sel', 'selv'].forEach((key) => {
+  // Carry the executive filter context across dashboards so nothing is lost on
+  // navigation (Sprint 45 QA: month / doctor / specialty / compare mode).
+  ['month', 'specialty', 'doctor', 'sel', 'selv', 'compare', 'comparison', 'mode'].forEach((key) => {
     const value = params.get(key);
     if (value) preserve.set(key, value);
   });

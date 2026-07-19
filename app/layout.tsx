@@ -1,10 +1,12 @@
 import './globals.css';
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import Nav from '@/components/Nav';
 import { DashboardProvider } from '@/lib/dashboard-context';
 import PageTransition from '@/components/PageTransition';
 import CommandPalette from '@/components/CommandPalette';
 import ThemeManager from '@/components/ThemeManager';
+import ExportToolbar from '@/components/export/ExportToolbar';
 
 export const metadata: Metadata = {
   title: 'HealPath BI',
@@ -26,7 +28,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <DashboardProvider>
           <div className="app">
             <Nav />
-            <main className="main"><PageTransition>{children}</PageTransition></main>
+            <main className="main">
+              {/* Executive Export Center (Sprint 45): one shared toolbar,
+                  rendered on the supported dashboards, inert elsewhere. It is a
+                  sibling of the captured .page-enter content, so it never
+                  appears in an export. */}
+              <Suspense fallback={null}><ExportToolbar /></Suspense>
+              <PageTransition>{children}</PageTransition>
+            </main>
           </div>
           <CommandPalette />
         </DashboardProvider>

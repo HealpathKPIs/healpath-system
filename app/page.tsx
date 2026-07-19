@@ -6,7 +6,7 @@ import { ExecutiveFeed, ExecutiveScenarioLayer, ExplainButton } from '@/componen
 import AnimatedNumber from '@/components/AnimatedNumber';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
-import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, listMonths, listSpecialties, listDoctors, resolveFilters } from '@/lib/queries';
+import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, listSpecialties, listDoctors, resolveFilters } from '@/lib/queries';
 import type { Filters, Kpis, RankRow, TrendResponse } from '@/lib/types';
 
 function OverviewKpi({ label, value, delta, tone }: { label: string; value: string | number; delta?: number; tone: string }) {
@@ -214,6 +214,10 @@ function ExecutiveSummary({ points }: { points: string[] }) {
   );
 }
 
+function monthsFromTrend(trends: TrendResponse) {
+  return trends.points.map((point) => point.month);
+}
+
 export default async function Overview({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string } }) {
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
   const [k, diseases, drugs, trends] = await Promise.all([
@@ -254,7 +258,7 @@ export default async function Overview({ searchParams }: { searchParams: { month
           <p className="overview-subtitle">Executive utilization summary for the 2026 reporting window</p>
         </div>
         <Suspense fallback={<div className="filters"><div className="skeleton-line" style={{ width: 150, height: 28 }} /><div className="skeleton-line" style={{ width: 150, height: 28 }} /></div>}>
-          <FilterBar months={listMonths()} specialties={listSpecialties()} doctors={listDoctors()} />
+          <FilterBar months={monthsFromTrend(trends)} specialties={listSpecialties()} doctors={listDoctors()} />
         </Suspense>
       </div>
 

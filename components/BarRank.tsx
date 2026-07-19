@@ -59,7 +59,7 @@ export default function BarRank({ data, color = '#635bff', kind }:
   }
 
   return (
-    <div className="rank-list">
+    <div className="rank-list" data-export-chart="rank-bars">
       {data.map((row) => {
         const width = `${Math.max(4, (row.value / max) * 100)}%`;
         const selected = interactive && isActive(row.label);
@@ -84,7 +84,7 @@ export default function BarRank({ data, color = '#635bff', kind }:
               <span className="rank-value">{row.value.toLocaleString()}</span>
             </div>
             <div className="rank-track">
-              <div className="rank-fill" style={{ width, background: `linear-gradient(90deg, ${color}cc, ${color})` }} />
+              <div className="rank-fill" style={{ width, background: color.startsWith('var(') ? color : `linear-gradient(90deg, ${color}cc, ${color})` }} />
             </div>
           </div>
         );

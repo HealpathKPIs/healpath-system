@@ -24,6 +24,15 @@ const MONTH_LABEL: Record<string, string> = {
   '2026-06': 'Jun 2026',
 };
 
+function labelMonth(value: string, withYear = false) {
+  const local = withYear ? MONTH_LABEL[value] : LABEL[value];
+  if (local) return local;
+  const match = /^(\d{4})-(\d{2})$/.exec(value);
+  if (!match) return value;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+  return new Intl.DateTimeFormat('en', { month: 'short', year: withYear ? 'numeric' : undefined, timeZone: 'UTC' }).format(date);
+}
+
 function formatPoints(points: TrendPoint[], key: typeof SERIES[number]['key'], min: number, max: number) {
   const width = 760;
   const height = 260;
@@ -47,7 +56,7 @@ function formatDelta(value: number) {
 
 function tooltipText(point: TrendPoint, delta?: TrendResponse['delta']) {
   const lines = [
-    `Month: ${MONTH_LABEL[point.month] ?? point.month}`,
+    `Month: ${labelMonth(point.month, true)}`,
     `Visits: ${typeof point.visits === 'number' ? point.visits.toLocaleString() : 'N/A'}`,
     `Avg Meds / Visit: ${point.meds.toFixed(2)}`,
     `Avg Labs / Visit: ${point.labs.toFixed(2)}`,
@@ -73,7 +82,7 @@ export default function TrendLine({ points, delta }: { points: TrendPoint[]; del
   const baseline = 226;
 
   return (
-    <div className="trend-chart">
+    <div className="trend-chart" data-export-chart="trend-line">
       <svg viewBox="0 0 760 300" role="img" aria-label="Average per visit by month">
         <defs>
           {SERIES.map((series) => (
@@ -108,7 +117,7 @@ export default function TrendLine({ points, delta }: { points: TrendPoint[]; del
           const x = 44 + index * ((760 - 44 - 18) / Math.max(points.length - 1, 1));
           return (
             <text className="trend-axis" key={point.month} x={x} y="286" textAnchor="middle">
-              {LABEL[point.month] ?? point.month}
+              {labelMonth(point.month)}
             </text>
           );
         })}

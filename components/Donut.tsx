@@ -27,33 +27,35 @@ export default function Donut({ data, kind }: { data: RankRow[]; kind?: Selectio
   }
 
   return (
-    <ResponsiveContainer width="100%" height={310}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="label"
-          cx="50%"
-          cy="48%"
-          innerRadius={66}
-          outerRadius={104}
-          paddingAngle={2}
-          onClick={kind ? (_, index) => { const row = data[index]; if (row) toggle(row.label); } : undefined}
-        >
-          {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-        </Pie>
-        <Tooltip
-          contentStyle={{
-            background: '#ffffff',
-            border: '1px solid #e4e7ec',
-            borderRadius: 8,
-            color: '#111827',
-            boxShadow: '0 12px 30px rgba(16,24,40,.12)',
-          }}
-          itemStyle={{ color: '#111827', fontWeight: 700 }}
-        />
-        <Legend wrapperStyle={{ fontSize: 11, color: '#667085', paddingTop: 8 }} />
-      </PieChart>
-    </ResponsiveContainer>
+    <div data-export-chart="recharts">
+      <ResponsiveContainer width="100%" height={310}>
+        <PieChart>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="label"
+            cx="50%"
+            cy="48%"
+            innerRadius={66}
+            outerRadius={104}
+            paddingAngle={2}
+            onClick={kind ? (_, index) => { const row = data[index]; if (row) toggle(row.label); } : undefined}
+          >
+            {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+          </Pie>
+          <Tooltip
+            contentStyle={{
+              background: '#ffffff',
+              border: '1px solid #e4e7ec',
+              borderRadius: 8,
+              color: '#111827',
+              boxShadow: '0 12px 30px rgba(16,24,40,.12)',
+            }}
+            itemStyle={{ color: '#111827', fontWeight: 700 }}
+          />
+          <Legend wrapperStyle={{ fontSize: 11, color: '#667085', paddingTop: 8 }} />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

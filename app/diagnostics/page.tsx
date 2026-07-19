@@ -10,7 +10,7 @@ export default async function Diagnostics({ searchParams }: { searchParams: { mo
   const [k, diag, trends] = await Promise.all([getKpis(f), getDiagnostics(f), getTrends(f.specialty, f.doctor, f.drug, f.disease)]);
   return (
     <>
-      <PageHead title="Labs & Scans" />
+      <PageHead title="Labs & Scans" months={trends.points.map((point) => point.month)} />
       <SearchBox scope="diagnostics" placeholder="Search lab or scan…" />
       <div className="grid kpirow" style={{ marginBottom: 18, gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))' }}>
         <KpiCard label="Labs / visit" value={k.avgLabs.toFixed(2)} delta={trends.delta.labs} />

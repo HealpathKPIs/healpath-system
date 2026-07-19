@@ -5,7 +5,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useDashboard } from '@/lib/dashboard-context';
 import type { Kpis, RankRow, TrendResponse } from '@/lib/types';
 
-type ScenarioType = 'Doctor' | 'Medication' | 'Laboratory';
+type ScenarioType = 'Doctor' | 'Specialty' | 'Medication' | 'Laboratory';
 
 interface Scenario {
   type: ScenarioType;
@@ -69,6 +69,7 @@ export function ExecutiveScenarioLayer({
 
   useEffect(() => {
     if (selection?.type === 'doctor') setScenario({ type: 'Doctor', name: selection.value });
+    else if (selection?.type === 'specialty') setScenario({ type: 'Specialty', name: selection.value });
     else if (selection?.type === 'drug') setScenario({ type: 'Medication', name: selection.value });
     else if (!selection) setScenario(null); // selection cleared elsewhere -> hide the panel
   }, [selection]);

@@ -17,7 +17,7 @@ export default async function Pharmacy({ searchParams }: { searchParams: { month
 
   return (
     <>
-      <PageHead title="Pharmacy" />
+      <PageHead title="Pharmacy" months={trends.points.map((point) => point.month)} />
 
       <SearchBox scope="pharmacy" placeholder="Search brand, ingredient, or generic…" />
 
