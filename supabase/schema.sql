@@ -45,6 +45,13 @@ create table if not exists healpath.scan_fact (
   tests    text
 );
 
+create table if not exists healpath.patient_master (
+  patient_id   bigint primary key,
+  risk_carrier text not null,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
 -- indexes for join + filter performance
 create index if not exists idx_diag_visit  on healpath.diagnosis_fact (visit_id);
 create index if not exists idx_drug_visit  on healpath.drug_fact (visit_id);
@@ -52,3 +59,5 @@ create index if not exists idx_lab_visit   on healpath.lab_fact (visit_id);
 create index if not exists idx_scan_visit  on healpath.scan_fact (visit_id);
 create index if not exists idx_visit_month on healpath.visits (month_year);
 create index if not exists idx_visit_spec  on healpath.visits (doctor_specialty);
+create index if not exists idx_patient_master_risk_carrier on healpath.patient_master (risk_carrier);
+create index if not exists idx_patient_master_updated_at on healpath.patient_master (updated_at desc);
