@@ -372,7 +372,7 @@ function TableSkeleton() {
 }
 
 async function HeaderSubtitle({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   const periodSuffix = data.currentPeriod ? ` - ${data.currentPeriod}` : '';
@@ -384,13 +384,14 @@ async function HeaderSubtitle({ searchParams }: {
 }
 
 async function ChronicFilters({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   return (
     <form id="chronic-filters" className="filters" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'end' }} aria-describedby="chronic-keyboard-shortcuts">
       <FilterSelect name="period" label="Period" value={data.filters.period ?? ''} options={data.options.periods} />
       <FilterSelect name="consultant" label="Consultant" value={data.filters.consultant ?? ''} options={data.options.consultants} />
+      <FilterSelect name="riskCarrier" label="Risk Carrier" value={data.filters.riskCarrier ?? ''} options={data.options.riskCarriers} />
       <FilterSelect name="issue" label="Issue" value={data.filters.issue ?? ''} options={data.options.issues} />
       <FilterSelect name="recommendation" label="Recommendation" value={data.filters.recommendation ?? ''} options={data.options.recommendations} />
       <label style={{ display: 'grid', gap: 5 }}>
@@ -404,14 +405,14 @@ async function ChronicFilters({ searchParams }: {
 }
 
 async function ChronicExportSection({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   return <ExportCenter data={data} />;
 }
 
 async function ExecutiveComparisonSection({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   return (
@@ -426,7 +427,7 @@ async function ExecutiveComparisonSection({ searchParams }: {
 }
 
 async function ClinicalOutcomeSection({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   return (
@@ -452,21 +453,21 @@ async function ClinicalOutcomeSection({ searchParams }: {
 }
 
 async function IssueComparisonSection({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   return <ComparisonTable title="Fixed Issue Catalog" rows={data.prePost.issueCatalog} />;
 }
 
 async function RecommendationComparisonSection({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   return <ComparisonTable title="Fixed Recommendation Catalog" rows={data.prePost.recommendationCatalog} />;
 }
 
 async function OperationalKpiSection({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   const data = await getChronicPageData(searchParams);
   const operational = data.prePost.operational;
@@ -486,7 +487,7 @@ async function OperationalKpiSection({ searchParams }: {
 }
 
 export default function ChronicCarePage({ searchParams }: {
-  searchParams: { period?: string; consultant?: string; recommendation?: string; issue?: string; patient?: string };
+  searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
   return (
     <section className="chronic-dashboard">

@@ -8,6 +8,7 @@ export interface Filters {
   doctor?: string | null;     // null = all doctors (practitioner_name)
   drug?: string | null;       // null = all; else visits containing this active ingredient/brand
   disease?: string | null;    // null = all; else visits containing this ICD block
+  riskCarrier?: string | null; // null = all risk carriers
   search?: string | null;     // null = none; else a case-insensitive partial term (Sprint 19)
   /** Compare-window support: include only visits whose prescription_date day-of-month <= this. */
   dayThrough?: number | null;
@@ -34,6 +35,7 @@ export interface TrendPoint {
   labs: number;
   scans: number;
   visits?: number; // present in live data (from the trend query); absent in the snapshot fallback
+  risk_carrier?: string | null;
 }
 
 export interface TrendResponse {
@@ -58,4 +60,5 @@ export interface DoctorRow {
   visits: number;
   medsPerVisit: number;
   labsPerVisit: number;
+  risk_carrier?: string | null;
 }

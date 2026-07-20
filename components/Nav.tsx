@@ -75,7 +75,7 @@ function PreservedNavLinks({ path }: { path: string }) {
   const preserve = new URLSearchParams();
   // Carry the executive filter context across dashboards so nothing is lost on
   // navigation (Sprint 45 QA: month / doctor / specialty / compare mode).
-  ['month', 'specialty', 'doctor', 'sel', 'selv', 'compare', 'comparison', 'mode'].forEach((key) => {
+  ['month', 'specialty', 'doctor', 'riskCarrier', 'sel', 'selv', 'compare', 'comparison', 'mode'].forEach((key) => {
     const value = params.get(key);
     if (value) preserve.set(key, value);
   });

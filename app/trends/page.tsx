@@ -3,9 +3,9 @@ import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
 import { getTrends, resolveFilters } from '@/lib/queries';
 
-export default async function Trends({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string } }) {
+export default async function Trends({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string } }) {
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
-  const trends = await getTrends(f.specialty, f.doctor, f.drug, f.disease);
+  const trends = await getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier);
   return (
     <>
       <PageHead title="Trends" months={trends.points.map((point) => point.month)} />

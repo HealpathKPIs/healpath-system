@@ -8,6 +8,7 @@ export async function GET(req: NextRequest) {
     month: p.get('month'),
     specialty: p.get('specialty'),
     doctor: p.get('doctor'),
+    riskCarrier: p.get('riskCarrier'),
     dayThrough: Number.isFinite(dayThrough) ? dayThrough : null,
   });
   return NextResponse.json(kpis);

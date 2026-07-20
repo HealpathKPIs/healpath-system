@@ -6,12 +6,12 @@ import SearchBox from '@/components/SearchBox';
 import { getKpis, getSpecialties, getTrends, resolveFilters } from '@/lib/queries';
 import type { RankRow } from '@/lib/types';
 
-export default async function Doctors({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string; q?: string } }) {
+export default async function Doctors({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string; q?: string } }) {
   // Honours specialty (dropdown or selection) but stays inert to the doctor filter,
   // exactly as the doctor dropdown behaves here (Sprint 15); no drug/disease drill-down.
   const f = resolveFilters(searchParams, { doctor: false });
   const [k, { ranking, doctors }, trends] = await Promise.all([
-    getKpis(f), getSpecialties(f), getTrends(f.specialty, f.doctor, f.drug, f.disease),
+    getKpis(f), getSpecialties(f), getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier),
   ]);
 
   // Presentation-only shaping of existing data — top performers by visit volume.

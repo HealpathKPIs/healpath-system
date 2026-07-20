@@ -4,10 +4,10 @@ import BarRank from '@/components/BarRank';
 import SearchBox from '@/components/SearchBox';
 import { getKpis, getDiagnostics, getTrends, resolveFilters } from '@/lib/queries';
 
-export default async function Diagnostics({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string; q?: string } }) {
+export default async function Diagnostics({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string; q?: string } }) {
   // Labs & Scans honours a disease cross-filter but not a drug one.
   const f = resolveFilters(searchParams, { doctor: true, drug: false, disease: true });
-  const [k, diag, trends] = await Promise.all([getKpis(f), getDiagnostics(f), getTrends(f.specialty, f.doctor, f.drug, f.disease)]);
+  const [k, diag, trends] = await Promise.all([getKpis(f), getDiagnostics(f), getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier)]);
   return (
     <>
       <PageHead title="Labs & Scans" months={trends.points.map((point) => point.month)} />

@@ -1,6 +1,8 @@
 import { dbQuery, hasDb } from '@/lib/pg';
 import type { PatientMasterRow } from '@/lib/patient-master-parser';
 
+export type PatientMasterQueryExecutor = <T = Record<string, unknown>>(text: string, params?: unknown[]) => Promise<T[]>;
+
 export interface PatientMasterRecord {
   patient_id: string;
   risk_carrier: string;
@@ -20,10 +22,24 @@ export interface PatientMasterStats {
 }
 
 export class PatientMasterRepository {
-  static async ensureTable() {
+  constructor(private readonly query: PatientMasterQueryExecutor = dbQuery) {}
+
+  static acuteJoin(visitAlias = 'v', patientMasterAlias = 'pm') {
+    return `left join healpath.patient_master ${patientMasterAlias} on ${patientMasterAlias}.patient_id = ${visitAlias}.patient_id::bigint`;
+  }
+
+  static chronicJoin(chronicAlias = 'c', patientMasterAlias = 'pm') {
+    return `left join healpath.patient_master ${patientMasterAlias} on ${patientMasterAlias}.patient_id = cast(nullif(btrim(${chronicAlias}.row_data->>'INDIVIDUAL NUMBER'), '') as bigint)`;
+  }
+
+  static riskCarrierSelect(patientMasterAlias = 'pm') {
+    return `${patientMasterAlias}.risk_carrier as risk_carrier`;
+  }
+
+  async ensureTable() {
     if (!hasDb) throw new Error('DATABASE_URL is not configured.');
-    await dbQuery('create schema if not exists healpath');
-    await dbQuery(`
+    await this.query('create schema if not exists healpath');
+    await this.query(`
       create table if not exists healpath.patient_master (
         patient_id bigint primary key,
         risk_carrier text not null,
@@ -31,15 +47,15 @@ export class PatientMasterRepository {
         updated_at timestamptz not null default now()
       )
     `);
-    await dbQuery('create index if not exists idx_patient_master_risk_carrier on healpath.patient_master (risk_carrier)');
-    await dbQuery('create index if not exists idx_patient_master_updated_at on healpath.patient_master (updated_at desc)');
+    await this.query('create index if not exists idx_patient_master_risk_carrier on healpath.patient_master (risk_carrier)');
+    await this.query('create index if not exists idx_patient_master_updated_at on healpath.patient_master (updated_at desc)');
   }
 
-  static async upsertRows(rows: PatientMasterRow[]): Promise<PatientMasterImportCounts> {
+  async upsertRows(rows: PatientMasterRow[]): Promise<PatientMasterImportCounts> {
     await this.ensureTable();
     if (!rows.length) return { inserted: 0, updated: 0 };
 
-    const result = await dbQuery<{ inserted: number; updated: number }>(
+    const result = await this.query<{ inserted: number; updated: number }>(
       `
         with incoming as (
           select x.patient_id::bigint as patient_id, btrim(x.risk_carrier) as risk_carrier
@@ -73,9 +89,9 @@ export class PatientMasterRepository {
     };
   }
 
-  static async getPatient(patientId: string | number): Promise<PatientMasterRecord | null> {
+  async getPatient(patientId: string | number): Promise<PatientMasterRecord | null> {
     await this.ensureTable();
-    const rows = await dbQuery<PatientMasterRecord>(
+    const rows = await this.query<PatientMasterRecord>(
       `
         select patient_id::text, risk_carrier, created_at::text, updated_at::text
         from healpath.patient_master
@@ -86,27 +102,27 @@ export class PatientMasterRepository {
     return rows[0] ?? null;
   }
 
-  static async getRiskCarrier(patientId: string | number): Promise<string | null> {
+  async getRiskCarrier(patientId: string | number): Promise<string | null> {
     const patient = await this.getPatient(patientId);
     return patient?.risk_carrier ?? null;
   }
 
-  static async getAllRiskCarriers(): Promise<string[]> {
+  async getAllRiskCarriers(): Promise<string[]> {
     await this.ensureTable();
-    const rows = await dbQuery<{ risk_carrier: string }>(
+    const rows = await this.query<{ risk_carrier: string }>(
       `
-        select distinct risk_carrier
+        select distinct btrim(risk_carrier) as risk_carrier
         from healpath.patient_master
         where risk_carrier is not null and btrim(risk_carrier) <> ''
-        order by risk_carrier
+        order by 1
       `,
     );
     return rows.map((row) => row.risk_carrier);
   }
 
-  static async getStats(): Promise<PatientMasterStats> {
+  async getStats(): Promise<PatientMasterStats> {
     await this.ensureTable();
-    const rows = await dbQuery<PatientMasterStats>(
+    const rows = await this.query<PatientMasterStats>(
       `
         with stats as (
           select max(updated_at) as last_import_at, count(*)::int as current_count
@@ -125,5 +141,31 @@ export class PatientMasterRepository {
       `,
     );
     return rows[0] ?? { lastImportAt: null, rowsImported: 0, currentCount: 0 };
+  }
+
+  private static readonly defaultRepository = new PatientMasterRepository();
+
+  static ensureTable() {
+    return this.defaultRepository.ensureTable();
+  }
+
+  static upsertRows(rows: PatientMasterRow[]): Promise<PatientMasterImportCounts> {
+    return this.defaultRepository.upsertRows(rows);
+  }
+
+  static getPatient(patientId: string | number): Promise<PatientMasterRecord | null> {
+    return this.defaultRepository.getPatient(patientId);
+  }
+
+  static getRiskCarrier(patientId: string | number): Promise<string | null> {
+    return this.defaultRepository.getRiskCarrier(patientId);
+  }
+
+  static getAllRiskCarriers(): Promise<string[]> {
+    return this.defaultRepository.getAllRiskCarriers();
+  }
+
+  static getStats(): Promise<PatientMasterStats> {
+    return this.defaultRepository.getStats();
   }
 }

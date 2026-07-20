@@ -5,10 +5,10 @@ import DataTable from '@/components/DataTable';
 import SearchBox from '@/components/SearchBox';
 import { getDiseases, getDiseaseDescriptions, getTrends, resolveFilters } from '@/lib/queries';
 
-export default async function Diseases({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string; q?: string } }) {
+export default async function Diseases({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string; q?: string } }) {
   // Diseases page honours a drug cross-filter but not a disease one (it is the disease view).
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: false });
-  const [blocks, descriptions, trends] = await Promise.all([getDiseases(f, 10), getDiseaseDescriptions(f), getTrends(f.specialty, f.doctor, f.drug, f.disease)]);
+  const [blocks, descriptions, trends] = await Promise.all([getDiseases(f, 10), getDiseaseDescriptions(f), getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier)]);
   const months = trends.points.map((point) => point.month);
   return (
     <>

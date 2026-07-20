@@ -8,18 +8,20 @@ export interface PatientMasterUploadSummary extends PatientMasterParseResult {
 }
 
 export class PatientMasterService {
-  static previewPatientMaster(buffer: Buffer): PatientMasterParseResult {
+  constructor(private readonly repository: PatientMasterRepository = new PatientMasterRepository()) {}
+
+  previewPatientMaster(buffer: Buffer): PatientMasterParseResult {
     return parsePatientMasterWorkbook(buffer);
   }
 
-  static async uploadPatientMaster(buffer: Buffer): Promise<PatientMasterUploadSummary> {
+  async uploadPatientMaster(buffer: Buffer): Promise<PatientMasterUploadSummary> {
     const started = Date.now();
     const parsed = parsePatientMasterWorkbook(buffer);
     if (parsed.errors.length) {
       return { ...parsed, inserted: 0, updated: 0, durationMs: Date.now() - started };
     }
 
-    const counts: PatientMasterImportCounts = await PatientMasterRepository.upsertRows(parsed.rows);
+    const counts: PatientMasterImportCounts = await this.repository.upsertRows(parsed.rows);
     return {
       ...parsed,
       inserted: counts.inserted,
@@ -28,19 +30,45 @@ export class PatientMasterService {
     };
   }
 
+  getPatient(patientId: string | number): Promise<PatientMasterRecord | null> {
+    return this.repository.getPatient(patientId);
+  }
+
+  getRiskCarrier(patientId: string | number): Promise<string | null> {
+    return this.repository.getRiskCarrier(patientId);
+  }
+
+  getAllRiskCarriers(): Promise<string[]> {
+    return this.repository.getAllRiskCarriers();
+  }
+
+  getStats(): Promise<PatientMasterStats> {
+    return this.repository.getStats();
+  }
+
+  private static readonly defaultService = new PatientMasterService();
+
+  static previewPatientMaster(buffer: Buffer): PatientMasterParseResult {
+    return this.defaultService.previewPatientMaster(buffer);
+  }
+
+  static uploadPatientMaster(buffer: Buffer): Promise<PatientMasterUploadSummary> {
+    return this.defaultService.uploadPatientMaster(buffer);
+  }
+
   static getPatient(patientId: string | number): Promise<PatientMasterRecord | null> {
-    return PatientMasterRepository.getPatient(patientId);
+    return this.defaultService.getPatient(patientId);
   }
 
   static getRiskCarrier(patientId: string | number): Promise<string | null> {
-    return PatientMasterRepository.getRiskCarrier(patientId);
+    return this.defaultService.getRiskCarrier(patientId);
   }
 
   static getAllRiskCarriers(): Promise<string[]> {
-    return PatientMasterRepository.getAllRiskCarriers();
+    return this.defaultService.getAllRiskCarriers();
   }
 
   static getStats(): Promise<PatientMasterStats> {
-    return PatientMasterRepository.getStats();
+    return this.defaultService.getStats();
   }
 }

@@ -1,6 +1,6 @@
 import FilterBar from '@/components/FilterBar';
 import { ExecutiveScenarioLayer } from '@/components/ExecutiveExperience';
-import { getDiagnostics, getDrugs, getKpis, getPerformanceEntityMetrics, getTrends, listDoctors, listSpecialties, resolveFilters } from '@/lib/queries';
+import { getDiagnostics, getDrugs, getKpis, getPerformanceEntityMetrics, getTrends, listDoctors, listSpecialties, getRiskCarrierOptions, resolveFilters } from '@/lib/queries';
 import PerformanceMatrixClient, { type MatrixCell, type MatrixRow, type MatrixTab } from './PerformanceMatrixClient';
 import { Suspense } from 'react';
 
@@ -75,16 +75,17 @@ function fmt(metric: 'visits' | 'avgMeds' | 'avgLabs' | 'avgScans', value: numbe
 }
 
 export default async function PerformanceMatrix({ searchParams }: {
-  searchParams: { month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string; q?: string };
+  searchParams: { month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string; q?: string };
 }) {
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
 
-  const [k, drugs, diagnostics, trends, peerKpis] = await Promise.all([
+  const [k, drugs, diagnostics, trends, peerKpis, riskCarriers] = await Promise.all([
     getKpis(f),
     getDrugs(f),
     getDiagnostics(f),
-    getTrends(f.specialty, f.doctor, f.drug, f.disease),
+    getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier),
     f.doctor ? getKpis({ ...f, doctor: null }) : Promise.resolve(null),
+    getRiskCarrierOptions(),
   ]);
   const allMonths = trends.points.map((point) => point.month);
   const months = f.month ? [f.month].filter((month) => allMonths.includes(month)) : allMonths;
@@ -128,7 +129,7 @@ export default async function PerformanceMatrix({ searchParams }: {
           <p className="muted" style={{ margin: '8px 0 0' }}>Executive comparison across doctors, specialties, medications, laboratories, and scans.</p>
         </div>
         <Suspense fallback={<div className="filters"><div className="skeleton-line" style={{ width: 150, height: 28 }} /></div>}>
-          <FilterBar months={allMonths} specialties={listSpecialties()} doctors={listDoctors()} />
+          <FilterBar months={allMonths} specialties={listSpecialties()} doctors={listDoctors()} riskCarriers={riskCarriers} />
         </Suspense>
       </div>
       <PerformanceMatrixClient

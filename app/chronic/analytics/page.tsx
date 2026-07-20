@@ -417,6 +417,7 @@ export default async function ChronicAnalyticsPage({ searchParams }: {
   searchParams: {
     period?: string;
     consultant?: string;
+    riskCarrier?: string;
     recommendation?: string;
     issue?: string;
     medication?: string;
@@ -474,6 +475,7 @@ export default async function ChronicAnalyticsPage({ searchParams }: {
       <form className="filters" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'end' }}>
         <FilterSelect name="period" label="Period" value={data.filters.period ?? ''} options={data.options.periods} />
         <FilterSelect name="consultant" label="Consultant" value={data.filters.consultant ?? ''} options={data.options.consultants} />
+        <FilterSelect name="riskCarrier" label="Risk Carrier" value={data.filters.riskCarrier ?? ''} options={data.options.riskCarriers} />
         <FilterSelect name="recommendation" label="Recommendation" value={data.filters.recommendation ?? ''} options={data.options.recommendations} />
         <FilterSelect name="issue" label="Issue" value={data.filters.issue ?? ''} options={data.options.issues} />
         <FilterSelect name="medication" label="Medication" value={data.filters.medication ?? ''} options={data.options.medications} />

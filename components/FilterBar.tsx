@@ -17,7 +17,17 @@ function monthLabel(value: string) {
   return new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date);
 }
 
-export default function FilterBar({ months, specialties, doctors }: { months: string[]; specialties: string[]; doctors: string[] }) {
+export default function FilterBar({
+  months,
+  specialties,
+  doctors,
+  riskCarriers,
+}: {
+  months: string[];
+  specialties: string[];
+  doctors: string[];
+  riskCarriers: string[];
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -61,6 +71,10 @@ export default function FilterBar({ months, specialties, doctors }: { months: st
       <select aria-label="Doctor" value={doctor} onChange={(e) => set('doctor', e.target.value)}>
         <option value="">All doctors</option>
         {doctors.map((d) => <option key={d} value={d}>{d}</option>)}
+      </select>
+      <select aria-label="Risk Carrier" value={params.get('riskCarrier') ?? ''} onChange={(e) => set('riskCarrier', e.target.value)}>
+        <option value="">All</option>
+        {riskCarriers.map((carrier) => <option key={carrier} value={carrier}>{carrier}</option>)}
       </select>
       <button
         type="button"

@@ -12,6 +12,8 @@
 
 import { dbQuery, hasDb } from './pg';
 import type { Filters, Kpis, RankRow, TrendPoint, TrendResponse, TrendArrow, DoctorRow } from './types';
+import { PatientMasterRepository } from './patient-master-repository';
+import { PatientMasterService } from './patient-master-service';
 import snapshot from '../data/snapshot2026.json';
 import {
   type ChronicCalendarEntry,
@@ -35,14 +37,18 @@ export interface PerformanceEntityMetric {
 // scope the Power BI model is built on; the raw table also holds 2025 rows).
 // Positional binds: $1 = month, $2 = specialty, $3 = doctor (practitioner_name),
 // $4 = drug (cross-filter: visits containing this active ingredient OR brand),
-// $5 = disease (cross-filter: visits containing this ICD block). All nullable.
-// Any per-query LIMIT therefore uses $6.
+// $5 = disease (cross-filter: visits containing this ICD block),
+// $6 = risk carrier. All nullable. Any per-query LIMIT therefore uses $7.
 const VISIT_FILTER =
   "v.month_year like '2026-%' and ($1::text is null or v.month_year = $1) " +
   "and ($2::text is null or v.doctor_specialty = $2) " +
   "and ($3::text is null or v.practitioner_name = $3) " +
   "and ($4::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $4 or lower(btrim(xdf.brand)) = $4)) " +
-  "and ($5::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $5))";
+  "and ($5::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $5)) " +
+  "and ($6::text is null or pm.risk_carrier = $6)";
+
+const ACUTE_PATIENT_MASTER_JOIN = PatientMasterRepository.acuteJoin('v');
+const ACUTE_RISK_CARRIER_SELECT = PatientMasterRepository.riskCarrierSelect();
 
 function arrow(delta: number): TrendArrow {
   if (delta > 0) return '▲ Increase';
@@ -63,13 +69,16 @@ function drugParam(s?: string | null): string | null {
 function diseaseParam(s?: string | null): string | null {
   return s ? s.trim() : null;
 }
-
-// Standard positional binds for VISIT_FILTER ($1..$5). Append a LIMIT as $6.
-function visitParams(f: Filters): (string | null)[] {
-  return [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), drugParam(f.drug), diseaseParam(f.disease)];
+function riskCarrierParam(s?: string | null): string | null {
+  return s ? s.trim() : null;
 }
 
-// Sprint 19 search: `%term%` ILIKE pattern (min 2 chars) bound as $7 on the
+// Standard positional binds for VISIT_FILTER ($1..$6). Append a LIMIT as $7.
+function visitParams(f: Filters): (string | null)[] {
+  return [f.month ?? null, specialtyParam(f.specialty), doctorParam(f.doctor), drugParam(f.drug), diseaseParam(f.disease), riskCarrierParam(f.riskCarrier)];
+}
+
+// Sprint 19 search: `%term%` ILIKE pattern (min 2 chars) bound as $8 on the
 // search-enabled queries; null when there is no (valid) search term.
 function searchLike(f: Filters): string | null {
   const s = f.search?.trim();
@@ -87,7 +96,7 @@ function applySearch<T extends RankRow>(rows: T[], f: Filters): T[] {
 // ?sel/?selv)  >  URL dropdown filter  >  default (null).
 // `honor` controls which cross-filter dimensions a given page responds to.
 export interface SelectionParams {
-  month?: string; specialty?: string; doctor?: string; sel?: string; selv?: string; q?: string;
+  month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string; q?: string;
 }
 export function resolveFilters(
   sp: SelectionParams,
@@ -103,6 +112,7 @@ export function resolveFilters(
     doctor: doctorHonored ? ((sel?.type === 'doctor' ? sel.value : sp.doctor) ?? null) : null,
     drug: honor.drug && sel?.type === 'drug' ? sel.value : null,
     disease: honor.disease && sel?.type === 'disease' ? sel.value : null,
+    riskCarrier: sp.riskCarrier ?? null,
     search: sp.q?.trim() || null,
   };
 }
@@ -113,6 +123,7 @@ function whereClause(f: Filters): { sql: string; params: Record<string, unknown>
   const params: Record<string, unknown> = {};
   if (f.month) { clauses.push('v.month_year = :month'); params.month = f.month; }
   if (f.specialty) { clauses.push('v.doctor_specialty = :specialty'); params.specialty = f.specialty; }
+  if (f.riskCarrier) { clauses.push('pm.risk_carrier = :riskCarrier'); params.riskCarrier = f.riskCarrier; }
   return { sql: clauses.length ? 'where ' + clauses.join(' and ') : '', params };
 }
 
@@ -126,20 +137,20 @@ export const SQL = {
   kpis: (f: Filters) => {
     const { sql } = whereClause(f);
     return `
-      with base as (select v.visit_id, v.patient_id from healpath.visits v ${sql})
+      with base as (select v.visit_id, v.patient_id, ${ACUTE_RISK_CARRIER_SELECT} from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ${sql})
       select
         (select count(distinct visit_id) from base)                                        as visits,
         (select count(distinct patient_id) from base)                                      as patients,
-        (select count(distinct v.practitioner_name) from healpath.visits v ${sql})         as doctors,
-        (select count(distinct v.doctor_specialty) from healpath.visits v ${sql})          as specialties,
+        (select count(distinct v.practitioner_name) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ${sql})         as doctors,
+        (select count(distinct v.doctor_specialty) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ${sql})          as specialties,
         (select count(d.brand)::numeric from healpath.drug_fact d
-           join healpath.visits v on v.visit_id = d.visit_id ${sql})
+           join healpath.visits v on v.visit_id = d.visit_id ${ACUTE_PATIENT_MASTER_JOIN} ${sql})
           / nullif((select count(distinct visit_id) from base),0)                          as avg_meds,
         (select count(l.tests)::numeric from healpath.lab_fact l
-           join healpath.visits v on v.visit_id = l.visit_id ${sql})
+           join healpath.visits v on v.visit_id = l.visit_id ${ACUTE_PATIENT_MASTER_JOIN} ${sql})
           / nullif((select count(distinct visit_id) from base),0)                          as avg_labs,
         (select count(s.tests)::numeric from healpath.scan_fact s
-           join healpath.visits v on v.visit_id = s.visit_id ${sql})
+           join healpath.visits v on v.visit_id = s.visit_id ${ACUTE_PATIENT_MASTER_JOIN} ${sql})
           / nullif((select count(distinct visit_id) from base),0)                          as avg_scans;`;
   },
 
@@ -147,7 +158,7 @@ export const SQL = {
     const { sql } = whereClause(f);
     return `select dg.icd_block as label, count(*) as value
             from healpath.diagnosis_fact dg
-            join healpath.visits v on v.visit_id = dg.visit_id ${sql}
+            join healpath.visits v on v.visit_id = dg.visit_id ${ACUTE_PATIENT_MASTER_JOIN} ${sql}
             where dg.icd_block is not null and btrim(dg.icd_block) <> ''
             group by dg.icd_block order by value desc limit ${limit};`;
   },
@@ -156,7 +167,7 @@ export const SQL = {
     const { sql } = whereClause(f);
     return `select d.ac as label, count(*) as value
             from healpath.drug_fact d
-            join healpath.visits v on v.visit_id = d.visit_id ${sql}
+            join healpath.visits v on v.visit_id = d.visit_id ${ACUTE_PATIENT_MASTER_JOIN} ${sql}
             where d.ac is not null and btrim(d.ac) not in ('','0')
             group by d.ac order by value desc limit ${limit};`;
   },
@@ -165,7 +176,7 @@ export const SQL = {
     const { sql } = whereClause(f);
     return `select lower(btrim(d.brand)) as label, count(*) as value
             from healpath.drug_fact d
-            join healpath.visits v on v.visit_id = d.visit_id ${sql}
+            join healpath.visits v on v.visit_id = d.visit_id ${ACUTE_PATIENT_MASTER_JOIN} ${sql}
             where d.brand is not null and btrim(d.brand) <> ''
             group by lower(btrim(d.brand)) order by value desc limit ${limit};`;
   },
@@ -174,7 +185,7 @@ export const SQL = {
     const { sql } = whereClause(f);
     return `select t.tests as label, count(*) as value
             from healpath.${table} t
-            join healpath.visits v on v.visit_id = t.visit_id ${sql}
+            join healpath.visits v on v.visit_id = t.visit_id ${ACUTE_PATIENT_MASTER_JOIN} ${sql}
             where t.tests is not null and btrim(t.tests) <> ''
             group by t.tests order by value desc limit ${limit};`;
   },
@@ -182,14 +193,14 @@ export const SQL = {
   visitsBySpecialty: (f: Filters) => {
     const { sql } = whereClause(f);
     return `select v.doctor_specialty as label, count(distinct v.visit_id) as value
-            from healpath.visits v ${sql}
+            from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ${sql}
             group by v.doctor_specialty order by value desc;`;
   },
 
   doctorMatrix: (f: Filters, limit = 20) => {
     const { sql } = whereClause(f);
     return `
-      with dv as (select v.visit_id, v.practitioner_name, v.doctor_specialty from healpath.visits v ${sql})
+      with dv as (select v.visit_id, v.practitioner_name, v.doctor_specialty, ${ACUTE_RISK_CARRIER_SELECT} from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ${sql})
       select dv.practitioner_name as practitioner,
              max(dv.doctor_specialty) as specialty,
              count(distinct dv.visit_id) as visits,
@@ -207,20 +218,24 @@ export const SQL = {
       select v.month_year,
              count(distinct v.visit_id) as visits
       from healpath.visits v
+      ${PatientMasterRepository.acuteJoin('v')}
       ${specialty ? 'where v.doctor_specialty = :specialty' : ''}
       group by v.month_year
     )
     select m.month_year as month,
            (select count(d.brand)::numeric from healpath.drug_fact d
               join healpath.visits v on v.visit_id = d.visit_id
+              ${PatientMasterRepository.acuteJoin('v')}
               where v.month_year = m.month_year ${specialty ? 'and v.doctor_specialty = :specialty' : ''})
              / nullif(m.visits,0) as meds,
            (select count(l.tests)::numeric from healpath.lab_fact l
               join healpath.visits v on v.visit_id = l.visit_id
+              ${PatientMasterRepository.acuteJoin('v')}
               where v.month_year = m.month_year ${specialty ? 'and v.doctor_specialty = :specialty' : ''})
              / nullif(m.visits,0) as labs,
            (select count(s.tests)::numeric from healpath.scan_fact s
               join healpath.visits v on v.visit_id = s.visit_id
+              ${PatientMasterRepository.acuteJoin('v')}
               where v.month_year = m.month_year ${specialty ? 'and v.doctor_specialty = :specialty' : ''})
              / nullif(m.visits,0) as scans
     from months m order by m.month_year;`,
@@ -284,29 +299,32 @@ function snapshotPerformanceMetrics(
 let monthsCache: string[] | null = null;
 let specialtiesCache: string[] | null = null;
 let doctorsCache: string[] | null = null;
+let riskCarriersCache: string[] | null = null;
 let enumWarming: Promise<void> | null = null;
 
 async function refreshEnumerations(): Promise<void> {
   if (!hasDb) return;
   try {
-    const [months, specialties, doctors] = await Promise.all([
+    const [months, specialties, doctors, riskCarriers] = await Promise.all([
       dbQuery<{ month_year: string }>(
-        "select distinct month_year from healpath.visits where month_year like '2026-%' order by month_year",
+        `select distinct v.month_year from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year like '2026-%' order by v.month_year`,
       ),
       dbQuery<{ s: string }>(
-        "select distinct btrim(doctor_specialty) as s from healpath.visits " +
-          "where month_year like '2026-%' and doctor_specialty is not null and btrim(doctor_specialty) <> '' order by 1",
+        `select distinct btrim(v.doctor_specialty) as s from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ` +
+          "where v.month_year like '2026-%' and v.doctor_specialty is not null and btrim(v.doctor_specialty) <> '' order by 1",
       ),
       dbQuery<{ d: string }>(
-        "select distinct btrim(practitioner_name) as d from healpath.visits " +
-          "where month_year like '2026-%' and practitioner_name is not null and btrim(practitioner_name) <> '' order by 1",
+        `select distinct btrim(v.practitioner_name) as d from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ` +
+          "where v.month_year like '2026-%' and v.practitioner_name is not null and btrim(v.practitioner_name) <> '' order by 1",
       ),
+      PatientMasterService.getAllRiskCarriers(),
     ]);
     if (months.length) monthsCache = months.map((r) => r.month_year);
     if (specialties.length) specialtiesCache = specialties.map((r) => r.s);
     if (doctors.length) doctorsCache = doctors.map((r) => r.d);
+    riskCarriersCache = riskCarriers;
   } catch (e) {
-    console.warn('listMonths/listSpecialties/listDoctors live refresh failed, snapshot retained:', (e as Error).message);
+    console.warn('listMonths/listSpecialties/listDoctors/listRiskCarriers live refresh failed, snapshot retained:', (e as Error).message);
   }
 }
 
@@ -334,6 +352,21 @@ export function listDoctors(): string[] {
   if (hasDb) void warmEnumerations();
   return doctorsCache ?? snapshotDoctors();
 }
+export function listRiskCarriers(): string[] {
+  if (hasDb) void warmEnumerations();
+  return riskCarriersCache ?? [];
+}
+export async function getRiskCarrierOptions(): Promise<string[]> {
+  if (!hasDb) return riskCarriersCache ?? [];
+  try {
+    const riskCarriers = await PatientMasterService.getAllRiskCarriers();
+    riskCarriersCache = riskCarriers;
+    return riskCarriers;
+  } catch (e) {
+    console.warn('getRiskCarrierOptions live query failed:', (e as Error).message);
+    return riskCarriersCache ?? [];
+  }
+}
 
 export async function getKpis(f: Filters): Promise<Kpis> {
   if (hasDb) {
@@ -349,18 +382,21 @@ export async function getKpis(f: Filters): Promise<Kpis> {
       const kpiVisitFilter = `${VISIT_FILTER}${dayClause}`;
       const rows = await dbQuery<Record<string, unknown>>(`
         with base as (
-          select v.visit_id, v.patient_id from healpath.visits v where ${kpiVisitFilter}
+          select v.visit_id, v.patient_id, ${ACUTE_RISK_CARRIER_SELECT}
+          from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
+          where ${kpiVisitFilter}
         )
         select
           (select count(distinct visit_id) from base) as visits,
           (select count(distinct patient_id) from base) as patients,
-          (select count(distinct v.practitioner_name) from healpath.visits v where ${kpiVisitFilter}) as doctors,
-          (select count(distinct v.doctor_specialty) from healpath.visits v where ${kpiVisitFilter}) as specialties,
-          (select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id where ${kpiVisitFilter})
+          (select count(distinct v.practitioner_name) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter}) as doctors,
+          (select count(distinct v.doctor_specialty) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter}) as specialties,
+          (select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter})
             / nullif((select count(distinct visit_id) from base), 0) as avg_meds,
-          (select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id where ${kpiVisitFilter})
+          (select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter})
             / nullif((select count(distinct visit_id) from base), 0) as avg_labs,
-          (select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where ${kpiVisitFilter})
+          (select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter})
             / nullif((select count(distinct visit_id) from base), 0) as avg_scans
       `, params);
       const r = rows[0];
@@ -400,8 +436,9 @@ export async function getDiseases(f: Filters, limit = 10): Promise<RankRow[]> {
       const rows = await dbQuery<{ label: string; value: number }>(`
         select dg.icd_block as label, count(*)::int as value
         from healpath.diagnosis_fact dg join healpath.visits v on v.visit_id = dg.visit_id
+        ${ACUTE_PATIENT_MASTER_JOIN}
         where ${VISIT_FILTER} and dg.icd_block is not null and btrim(dg.icd_block) <> ''
-        group by dg.icd_block order by value desc limit $6
+        group by dg.icd_block order by value desc limit $7
       `, [...visitParams(f), limit]);
       return rows.map((r) => ({ label: r.label, value: Number(r.value) }));
     } catch (e) {
@@ -416,9 +453,10 @@ export async function getDiseaseDescriptions(f: Filters): Promise<RankRow[]> {
       const rows = await dbQuery<{ label: string; value: number }>(`
         select dg.icd_desc as label, count(*)::int as value
         from healpath.diagnosis_fact dg join healpath.visits v on v.visit_id = dg.visit_id
+        ${ACUTE_PATIENT_MASTER_JOIN}
         where ${VISIT_FILTER} and dg.icd_desc is not null and btrim(dg.icd_desc) <> ''
-          and ($7::text is null or dg.icd_desc ilike $7 or dg.diseases ilike $7)
-        group by dg.icd_desc order by value desc limit $6
+          and ($8::text is null or dg.icd_desc ilike $8 or dg.diseases ilike $8)
+        group by dg.icd_desc order by value desc limit $7
       `, [...visitParams(f), 15, searchLike(f)]);
       return rows.map((r) => ({ label: r.label, value: Number(r.value) }));
     } catch (e) {
@@ -434,16 +472,18 @@ export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: Ran
         dbQuery<{ label: string; value: number }>(`
           select d.ac as label, count(*)::int as value
           from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER} and d.ac is not null and btrim(d.ac) not in ('', '0')
-            and ($7::text is null or d.ac ilike $7 or d.brand ilike $7 or d.medications ilike $7)
-          group by d.ac order by value desc limit $6
+            and ($8::text is null or d.ac ilike $8 or d.brand ilike $8 or d.medications ilike $8)
+          group by d.ac order by value desc limit $7
         `, [...visitParams(f), 15, searchLike(f)]),
         dbQuery<{ label: string; value: number }>(`
           select lower(btrim(d.brand)) as label, count(*)::int as value
           from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER} and d.brand is not null and btrim(d.brand) <> ''
-            and ($7::text is null or d.brand ilike $7 or d.ac ilike $7 or d.medications ilike $7)
-          group by lower(btrim(d.brand)) order by value desc limit $6
+            and ($8::text is null or d.brand ilike $8 or d.ac ilike $8 or d.medications ilike $8)
+          group by lower(btrim(d.brand)) order by value desc limit $7
         `, [...visitParams(f), 10, searchLike(f)]),
       ]);
       return {
@@ -464,16 +504,18 @@ export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; sca
         dbQuery<{ label: string; value: number }>(`
           select l.tests as label, count(*)::int as value
           from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER} and l.tests is not null and btrim(l.tests) <> ''
-            and ($7::text is null or l.tests ilike $7)
-          group by l.tests order by value desc limit $6
+            and ($8::text is null or l.tests ilike $8)
+          group by l.tests order by value desc limit $7
         `, [...visitParams(f), 10, searchLike(f)]),
         dbQuery<{ label: string; value: number }>(`
           select s.tests as label, count(*)::int as value
           from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER} and s.tests is not null and btrim(s.tests) <> ''
-            and ($7::text is null or s.tests ilike $7)
-          group by s.tests order by value desc limit $6
+            and ($8::text is null or s.tests ilike $8)
+          group by s.tests order by value desc limit $7
         `, [...visitParams(f), 10, searchLike(f)]),
       ]);
       return {
@@ -494,20 +536,21 @@ export async function getDiagnosticEntityKpis(kind: 'lab' | 'scan', entity: stri
     try {
       const rows = await dbQuery<Record<string, unknown>>(`
         with base as (
-          select v.visit_id, v.patient_id
+          select v.visit_id, v.patient_id, ${ACUTE_RISK_CARRIER_SELECT}
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER}
             and v.visit_id in (
               select x.visit_id
               from healpath.${table} x
-              where x.tests = $6
+              where x.tests = $7
             )
         )
         select
           (select count(distinct visit_id) from base) as visits,
           (select count(distinct patient_id) from base) as patients,
-          (select count(distinct v.practitioner_name) from healpath.visits v where ${VISIT_FILTER} and v.visit_id in (select visit_id from base)) as doctors,
-          (select count(distinct v.doctor_specialty) from healpath.visits v where ${VISIT_FILTER} and v.visit_id in (select visit_id from base)) as specialties,
+          (select count(distinct v.practitioner_name) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where ${VISIT_FILTER} and v.visit_id in (select visit_id from base)) as doctors,
+          (select count(distinct v.doctor_specialty) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where ${VISIT_FILTER} and v.visit_id in (select visit_id from base)) as specialties,
           (select count(d.brand)::numeric from healpath.drug_fact d join base b on b.visit_id = d.visit_id)
             / nullif((select count(distinct visit_id) from base), 0) as avg_meds,
           (select count(l.tests)::numeric from healpath.lab_fact l join base b on b.visit_id = l.visit_id)
@@ -544,41 +587,45 @@ export async function getPerformanceEntityMetrics(
     const entitySource = (() => {
       if (kind === 'doctors') {
         return `
-          select v.practitioner_name as entity, v.visit_id, v.patient_id, v.month_year
+          select v.practitioner_name as entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER}
-            and v.month_year = any($7::text[])
-            and v.practitioner_name = any($6::text[])
+            and v.month_year = any($8::text[])
+            and v.practitioner_name = any($7::text[])
         `;
       }
       if (kind === 'specialties') {
         return `
-          select v.doctor_specialty as entity, v.visit_id, v.patient_id, v.month_year
+          select v.doctor_specialty as entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER}
-            and v.month_year = any($7::text[])
-            and v.doctor_specialty = any($6::text[])
+            and v.month_year = any($8::text[])
+            and v.doctor_specialty = any($7::text[])
         `;
       }
       if (kind === 'medications') {
         return `
-          select target.entity, v.visit_id, v.patient_id, v.month_year
+          select target.entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
           from healpath.visits v
           join healpath.drug_fact d on d.visit_id = v.visit_id
-          join unnest($6::text[]) target(entity)
+          ${ACUTE_PATIENT_MASTER_JOIN}
+          join unnest($7::text[]) target(entity)
             on d.ac = target.entity or lower(btrim(d.brand)) = target.entity
           where ${VISIT_FILTER}
-            and v.month_year = any($7::text[])
+            and v.month_year = any($8::text[])
         `;
       }
       const table = kind === 'laboratories' ? 'lab_fact' : 'scan_fact';
       return `
-        select target.entity, v.visit_id, v.patient_id, v.month_year
+        select target.entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
         from healpath.visits v
         join healpath.${table} x on x.visit_id = v.visit_id
-        join unnest($6::text[]) target(entity) on x.tests = target.entity
+        ${ACUTE_PATIENT_MASTER_JOIN}
+        join unnest($7::text[]) target(entity) on x.tests = target.entity
         where ${VISIT_FILTER}
-          and v.month_year = any($7::text[])
+          and v.month_year = any($8::text[])
       `;
     })();
     try {
@@ -591,7 +638,7 @@ export async function getPerformanceEntityMetrics(
         avg_scans: number;
       }>(`
         with base as (
-          select distinct entity, visit_id, patient_id, month_year
+          select distinct entity, visit_id, patient_id, month_year, risk_carrier
           from (${entitySource}) entity_visits
         ),
         visit_counts as (
@@ -652,15 +699,17 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
             case when v.doctor_specialty = 'Chest and Respiratory' then E'Chest and Respiratory\n' else v.doctor_specialty end as label,
             count(distinct v.visit_id)::int as value
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER} and v.doctor_specialty is not null and btrim(v.doctor_specialty) <> ''
           group by label order by value desc
         `, visitParams(f)),
         dbQuery<{ practitioner: string; specialty: string; visits: number; meds_count: number; labs_count: number }>(`
           with dv as (
-            select v.visit_id, v.practitioner_name, v.doctor_specialty
+            select v.visit_id, v.practitioner_name, v.doctor_specialty, ${ACUTE_RISK_CARRIER_SELECT}
             from healpath.visits v
+            ${ACUTE_PATIENT_MASTER_JOIN}
             where ${VISIT_FILTER} and v.practitioner_name is not null and btrim(v.practitioner_name) <> ''
-              and ($7::text is null or v.practitioner_name ilike $7 or v.doctor_specialty ilike $7)
+              and ($8::text is null or v.practitioner_name ilike $8 or v.doctor_specialty ilike $8)
           ),
           doctor_visits as (
             select dv.practitioner_name, count(distinct dv.visit_id)::int as visits
@@ -700,7 +749,7 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
           left join drug_counts on drug_counts.practitioner_name = doctor_visits.practitioner_name
           left join lab_counts on lab_counts.practitioner_name = doctor_visits.practitioner_name
           order by doctor_visits.visits desc, doctor_visits.practitioner_name asc
-          limit $6
+          limit $7
         `, [...visitParams(f), 20, searchLike(f)]),
       ]);
       return {
@@ -761,9 +810,11 @@ const SEARCH_SQL: Record<SearchScope, string> = {
   doctors: `
     select label, hint from (
       (select v.practitioner_name as label, 'Doctor' as hint, count(*) n from healpath.visits v
+        ${PatientMasterRepository.acuteJoin('v')}
         where v.practitioner_name is not null and btrim(v.practitioner_name) <> '' and v.practitioner_name ilike $1 group by v.practitioner_name order by n desc limit 5)
       union all
       (select btrim(v.doctor_specialty) as label, 'Specialty' as hint, count(*) n from healpath.visits v
+        ${PatientMasterRepository.acuteJoin('v')}
         where v.doctor_specialty is not null and btrim(v.doctor_specialty) <> '' and v.doctor_specialty ilike $1 group by btrim(v.doctor_specialty) order by n desc limit 4)
     ) u order by n desc limit 8`,
 };
@@ -807,29 +858,32 @@ export async function getTrends(
   doctor?: string | null,
   drug?: string | null,
   disease?: string | null,
+  riskCarrier?: string | null,
 ): Promise<TrendResponse> {
   let points: TrendPoint[] | null = null;
-  // Shared filter for the trend: specialty $1, doctor $2, drug $3, disease $4.
+  // Shared filter for the trend: specialty $1, doctor $2, drug $3, disease $4, risk carrier $5.
   const cond =
     "($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2) " +
     "and ($3::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $3 or lower(btrim(xdf.brand)) = $3)) " +
-    "and ($4::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $4))";
+    "and ($4::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $4)) " +
+    "and ($5::text is null or pm.risk_carrier = $5)";
   if (hasDb) {
     try {
       const rows = await dbQuery<{ month: string; visits: number; meds: number; labs: number; scans: number }>(`
         with mo as (
           select v.month_year as my, count(distinct v.visit_id) as visits
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where v.month_year like '2026-%' and ${cond}
           group by v.month_year
         )
         select mo.my as month,
           mo.visits::int as visits,
-          round((select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as meds,
-          round((select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as labs,
-          round((select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as scans
+          round((select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as meds,
+          round((select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as labs,
+          round((select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as scans
         from mo order by mo.my
-      `, [specialtyParam(specialty), doctorParam(doctor), drugParam(drug), diseaseParam(disease)]);
+      `, [specialtyParam(specialty), doctorParam(doctor), drugParam(drug), diseaseParam(disease), riskCarrierParam(riskCarrier)]);
       if (rows.length) points = rows.map((r) => ({
         month: r.month,
         visits: Number(r.visits),
@@ -859,6 +913,7 @@ export async function getTrends(
 export interface ChronicOverviewFilters {
   period?: string | null;
   consultant?: string | null;
+  riskCarrier?: string | null;
   recommendation?: string | null;
   issue?: string | null;
   medication?: string | null;
@@ -1014,6 +1069,7 @@ export interface ChronicOverviewData {
     recommendations: string[];
     issues: string[];
     medications: string[];
+    riskCarriers: string[];
   };
   currentPeriod: string | null;
   previousPeriod: string | null;
@@ -1054,6 +1110,7 @@ interface ChronicRow {
   week: string;
   month: string;
   patient_id: string;
+  risk_carrier?: string | null;
   recommendation: string;
   issue: string | null;
   issue_values: string[] | null;
@@ -1826,7 +1883,7 @@ const CHRONIC_KPI_LABELS = [
 function emptyChronicData(filters: Required<ChronicOverviewFilters>): ChronicOverviewData {
   return {
     filters,
-    options: { periods: [], weeks: [], consultants: [], recommendations: [], issues: [], medications: [] },
+    options: { periods: [], weeks: [], consultants: [], recommendations: [], issues: [], medications: [], riskCarriers: riskCarriersCache ?? [] },
     currentPeriod: null,
     previousPeriod: null,
     kpis: CHRONIC_KPI_LABELS.map((label) => ({
@@ -1873,6 +1930,7 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
   const f = {
     period: cleanChronicFilter(filters.period),
     consultant: cleanChronicFilter(filters.consultant),
+    riskCarrier: riskCarrierParam(filters.riskCarrier),
     recommendation: recommendationFilter ? canonicalizeRecommendation(recommendationFilter) : null,
     issue: cleanChronicFilter(filters.issue),
     medication: cleanChronicFilter(filters.medication),
@@ -1882,6 +1940,7 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
   const normalized = {
     period: f.period ?? '',
     consultant: f.consultant ?? '',
+    riskCarrier: f.riskCarrier ?? '',
     recommendation: f.recommendation ?? '',
     issue: f.issue ?? '',
     medication: f.medication ?? '',
@@ -1894,17 +1953,20 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
   // current-period analytics in memory. This keeps a single query AND makes
   // "delta vs previous period" work even while a period filter is active.
   const calendar = await getChronicCalendar();
+  const riskCarriers = await getRiskCarrierOptions();
 
   try {
     const rows = await dbQuery<ChronicRow>(`
       with chronic as (
-        select 'pre'::text as phase, week, month, btrim(patient_id) as patient_id, recommendation, issue, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
-        from healpath.chronic_pre
+        select 'pre'::text as phase, cp.week, cp.month, btrim(cp.patient_id) as patient_id, ${PatientMasterRepository.riskCarrierSelect('pm_pre')}, cp.recommendation, cp.issue, cp.medication_name, cp.row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
+        from healpath.chronic_pre cp
+        ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
         union all
-        select 'post'::text as phase, week, month, btrim(patient_id) as patient_id, recommendation, issue, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
-        from healpath.chronic_post
+        select 'post'::text as phase, cpo.week, cpo.month, btrim(cpo.patient_id) as patient_id, ${PatientMasterRepository.riskCarrierSelect('pm_post')}, cpo.recommendation, cpo.issue, cpo.medication_name, cpo.row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
+        from healpath.chronic_post cpo
+        ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
       )
-      select phase, week, month, patient_id, recommendation, issue, medication_name, consultant,
+      select phase, week, month, patient_id, risk_carrier, recommendation, issue, medication_name, consultant,
         coalesce(issue_extract.issue_values, array[]::text[]) as issue_values
       from chronic
       left join lateral (
@@ -1923,8 +1985,9 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
       where ($1::text is null or consultant = $1)
         and ($2::text is null or regexp_replace(lower(btrim(recommendation)), '[^a-z0-9]+', '', 'g') = $2)
         and ($3::text is null or patient_id ilike '%' || $3 || '%')
+        and ($4::text is null or risk_carrier = $4)
       order by week, phase, patient_id
-    `, [f.consultant, recommendationFilterKey, f.patient]);
+    `, [f.consultant, recommendationFilterKey, f.patient, f.riskCarrier]);
     const canonicalRows = rows.map((row) => ({ ...row, recommendation: canonicalizeRecommendation(row.recommendation) }));
     // Filter by the CANONICAL issue so a selected canonical option (and legacy
     // raw values in bookmarked URLs) match rows whose values are now canonical.
@@ -1945,6 +2008,7 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
       recommendations: uniq(filteredRows.map((row) => canonicalizeRecommendation(row.recommendation))),
       issues: uniq(filteredRows.flatMap((row) => issueValues(row))),
       medications: medicationOptions,
+      riskCarriers,
     };
     if (!filteredRows.length) return { ...emptyChronicData(normalized), options };
     const scopedRows = f.medication
@@ -2110,11 +2174,13 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
 
 const CHRONIC_PAGE_CTE = `
   with chronic as (
-    select 'pre'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
-    from healpath.chronic_pre
+    select 'pre'::text as phase, cp.week, btrim(cp.patient_id) as patient_id, cp.recommendation, cp.medication_name, cp.row_data, ${CHRONIC_CARE_CONSULTANT} as consultant, ${PatientMasterRepository.riskCarrierSelect('pm_pre')}
+    from healpath.chronic_pre cp
+    ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
     union all
-    select 'post'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data, ${CHRONIC_CARE_CONSULTANT} as consultant
-    from healpath.chronic_post
+    select 'post'::text as phase, cpo.week, btrim(cpo.patient_id) as patient_id, cpo.recommendation, cpo.medication_name, cpo.row_data, ${CHRONIC_CARE_CONSULTANT} as consultant, ${PatientMasterRepository.riskCarrierSelect('pm_post')}
+    from healpath.chronic_post cpo
+    ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
   )`;
 
 // Issue-field predicates — identical to the getChronicOverview lateral.
@@ -2122,7 +2188,8 @@ const CHRONIC_ISSUE_KEY = "regexp_replace(lower(btrim(e.key)), '[^a-z0-9]', '', 
 const CHRONIC_ISSUE_VALUE = "btrim(e.value) <> '' and regexp_replace(lower(btrim(e.value)), '[^a-z0-9]', '', 'g') !~ '^issue[0-9]+$'";
 
 // Shared filter clause: $1 consultant, $2 recommendation, $3 patient,
-// $4 raw-spelling variants of the selected canonical issue (null = no filter).
+// $4 raw-spelling variants of the selected canonical issue (null = no filter),
+// $5 risk carrier.
 const CHRONIC_PAGE_WHERE = `
       ($1::text is null or c.consultant = $1)
       and ($2::text is null or regexp_replace(lower(btrim(c.recommendation)), '[^a-z0-9]+', '', 'g') = $2)
@@ -2130,7 +2197,8 @@ const CHRONIC_PAGE_WHERE = `
       and ($4::text[] is null or exists (
         select 1 from jsonb_each_text(c.row_data) e(key, value)
         where ${CHRONIC_ISSUE_KEY} and ${CHRONIC_ISSUE_VALUE} and btrim(e.value) = any($4::text[])
-      ))`;
+      ))
+      and ($5::text is null or c.risk_carrier = $5)`;
 
 const CHRONIC_CALENDAR_JOIN =
   "left join healpath.chronic_calendar cal on cal.week = nullif((regexp_match(c.week, '[0-9]+'))[1], '')::int";
@@ -2298,6 +2366,7 @@ async function loadChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
   const f = {
     period: cleanChronicFilter(filters.period),
     consultant: cleanChronicFilter(filters.consultant),
+    riskCarrier: riskCarrierParam(filters.riskCarrier),
     recommendation: recommendationFilter ? canonicalizeRecommendation(recommendationFilter) : null,
     issue: cleanChronicFilter(filters.issue),
     medication: cleanChronicFilter(filters.medication),
@@ -2307,6 +2376,7 @@ async function loadChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
   const normalized = {
     period: f.period ?? '',
     consultant: f.consultant ?? '',
+    riskCarrier: f.riskCarrier ?? '',
     recommendation: f.recommendation ?? '',
     issue: f.issue ?? '',
     medication: f.medication ?? '',
@@ -2334,11 +2404,12 @@ async function loadChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
         where ($1::text is null or c.consultant = $1)
           and ($2::text is null or regexp_replace(lower(btrim(c.recommendation)), '[^a-z0-9]+', '', 'g') = $2)
           and ($3::text is null or c.patient_id ilike '%' || $3 || '%')
-      `, [f.consultant, recommendationFilterKey, f.patient]);
+          and ($4::text is null or c.risk_carrier = $4)
+      `, [f.consultant, recommendationFilterKey, f.patient, f.riskCarrier]);
       issueVariants = raws.map((row) => row.raw_value).filter((raw) => canonicalizeIssue(raw) === target);
       if (!issueVariants.length) issueVariants = ['__healpath_no_issue_match__'];
     }
-    const params = [f.consultant, recommendationFilterKey, f.patient, issueVariants];
+    const params = [f.consultant, recommendationFilterKey, f.patient, issueVariants, f.riskCarrier];
 
     // Stage 2: every dataset in parallel — aggregates only, no row_data shipped.
     const [kpiRows, trendRows, dimRows, issueRows, recommendationRows, operationalRows, drillRows] = await Promise.all([
@@ -2498,6 +2569,7 @@ async function loadChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
       Array.from(new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b));
     const presentWeeks = uniq(dimRows.filter((row) => row.kind === 'week').map((row) => row.value));
     const calendar = await getChronicCalendar();
+    const riskCarriers = await getRiskCarrierOptions();
     const options: ChronicOverviewData['options'] = {
       periods: chronicPeriodsForWeeks(calendar, presentWeeks).map((entry) => entry.period),
       weeks: presentWeeks,
@@ -2505,6 +2577,7 @@ async function loadChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
       recommendations: uniq(recommendationRows.map((row) => canonicalizeRecommendation(row.raw_value))),
       issues: uniq(issueRows.map((row) => canonicalizeIssue(row.raw_value))),
       medications: uniq(dimRows.filter((row) => row.kind === 'medication').map((row) => row.value)),
+      riskCarriers,
     };
     if (!kpiRows.length && !trendRows.length) return { ...empty(), options };
 
@@ -2589,6 +2662,7 @@ export function getChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
     canonicalizeRecommendation(cleanChronicFilter(filters.recommendation)),
     cleanChronicFilter(filters.issue),
     cleanChronicFilter(filters.patient),
+    riskCarrierParam(filters.riskCarrier),
   ]);
   const cached = chronicPageDataCache.get(key);
   if (cached) return cached;
@@ -2609,6 +2683,7 @@ export interface ChronicPatientTimelineRow {
   phase: 'pre' | 'post';
   week: string;
   period: string;
+  risk_carrier?: string | null;
   medicationName: string;
   recommendation: string;
   issues: string[];
@@ -2616,6 +2691,7 @@ export interface ChronicPatientTimelineRow {
 
 export interface ChronicPatientSummary {
   patientId: string;
+  risk_carrier?: string | null;
   weeks: number;
   preMedications: number;
   postMedications: number;
@@ -2673,6 +2749,7 @@ interface ChronicPatientDbRow {
   period: string | null;
   month_order: number | null;
   patient_id: string;
+  risk_carrier?: string | null;
   recommendation: string | null;
   medication_name: string | null;
   issue_values: string[] | null;
@@ -2753,11 +2830,13 @@ export async function getChronicPatientExplorer(filters: ChronicPatientExplorerF
   try {
     const matches = await dbQuery<{ patient_id: string }>(`
       with chronic as (
-        select btrim(patient_id) as patient_id from healpath.chronic_pre
+        select btrim(cp.patient_id) as patient_id, ${PatientMasterRepository.riskCarrierSelect('pm_pre')} from healpath.chronic_pre cp
+        ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
         union
-        select btrim(patient_id) as patient_id from healpath.chronic_post
+        select btrim(cpo.patient_id) as patient_id, ${PatientMasterRepository.riskCarrierSelect('pm_post')} from healpath.chronic_post cpo
+        ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
       )
-      select patient_id
+      select distinct patient_id
       from chronic
       where patient_id ilike '%' || $1 || '%'
       order by
@@ -2774,15 +2853,17 @@ export async function getChronicPatientExplorer(filters: ChronicPatientExplorerF
 
     const rows = await dbQuery<ChronicPatientDbRow>(`
       with chronic as (
-        select 'pre'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data
-        from healpath.chronic_pre
-        where btrim(patient_id) = $1
+        select 'pre'::text as phase, cp.week, btrim(cp.patient_id) as patient_id, ${PatientMasterRepository.riskCarrierSelect('pm_pre')}, cp.recommendation, cp.medication_name, cp.row_data
+        from healpath.chronic_pre cp
+        ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
+        where btrim(cp.patient_id) = $1
         union all
-        select 'post'::text as phase, week, btrim(patient_id) as patient_id, recommendation, medication_name, row_data
-        from healpath.chronic_post
-        where btrim(patient_id) = $1
+        select 'post'::text as phase, cpo.week, btrim(cpo.patient_id) as patient_id, ${PatientMasterRepository.riskCarrierSelect('pm_post')}, cpo.recommendation, cpo.medication_name, cpo.row_data
+        from healpath.chronic_post cpo
+        ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
+        where btrim(cpo.patient_id) = $1
       )
-      select c.phase, c.week, cal.period, cal.month_order, c.patient_id, c.recommendation, c.medication_name,
+      select c.phase, c.week, cal.period, cal.month_order, c.patient_id, c.risk_carrier, c.recommendation, c.medication_name,
         coalesce(issue_extract.issue_values, array[]::text[]) as issue_values
       from chronic c
       left join healpath.chronic_calendar cal on cal.week = nullif((regexp_match(c.week, '[0-9]+'))[1], '')::int
@@ -2806,6 +2887,7 @@ export async function getChronicPatientExplorer(filters: ChronicPatientExplorerF
       phase: row.phase,
       week: row.week,
       period: row.period ?? 'Unmapped',
+      risk_carrier: row.risk_carrier ?? null,
       medicationName: row.medication_name?.trim() || 'Unspecified medication',
       recommendation: canonicalizeRecommendation(row.recommendation),
       issues: (row.issue_values ?? []).map((value) => canonicalizeIssue(value)).filter(Boolean),
@@ -2819,6 +2901,7 @@ export async function getChronicPatientExplorer(filters: ChronicPatientExplorerF
     const weeks = new Set(timeline.map((row) => row.week));
     const summary: ChronicPatientSummary = {
       patientId: selectedPatientId,
+      risk_carrier: rows.find((row) => row.risk_carrier)?.risk_carrier ?? null,
       weeks: weeks.size,
       preMedications: preRows.length,
       postMedications: postRows.length,
@@ -2886,6 +2969,7 @@ export interface Patient360Filters {
 
 export interface Patient360Summary {
   patientId: string;
+  risk_carrier?: string | null;
   firstAcuteVisit: string | null;
   latestAcuteVisit: string | null;
   acuteVisits: number;
@@ -2915,6 +2999,7 @@ export interface Patient360DiagnosticItem {
 
 export interface Patient360AcuteVisit {
   visitId: string;
+  risk_carrier?: string | null;
   visitDate: string;
   doctor: string;
   specialty: string;
@@ -2930,6 +3015,7 @@ export interface Patient360AcuteVisit {
 
 export interface Patient360ChronicReview {
   id: string;
+  risk_carrier?: string | null;
   week: string;
   period: string;
   phase: 'pre' | 'post';
@@ -2943,6 +3029,7 @@ export interface Patient360ChronicReview {
 /** One acute prescription row (drug_fact) — NOT aggregated. */
 export interface Patient360AcuteMedicationRow {
   id: string;
+  risk_carrier?: string | null;
   visitDate: string | null;
   medication: string;
   activeIngredient: string;
@@ -2952,6 +3039,7 @@ export interface Patient360AcuteMedicationRow {
 /** One chronic review medication row (Pre/Post) — exactly as stored. */
 export interface Patient360ChronicMedicationRow {
   id: string;
+  risk_carrier?: string | null;
   week: string;
   period: string;
   phase: 'pre' | 'post';
@@ -3099,15 +3187,20 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
     const patient360HasAcute = patient360Sources.has_acute;
     const patient360HasChronic = patient360Sources.has_chronic_pre || patient360Sources.has_chronic_post;
     if (!patient360HasAcute && !patient360HasChronic) return patient360Empty(patient);
+    const patient360RiskCarrier = patientNumber !== null
+      ? await PatientMasterService.getRiskCarrier(patientNumber).catch(() => null)
+      : null;
 
     const patient360AcuteRows = patient360HasAcute ? await dbQuery<Patient360AcuteVisit>(`
         with acute_base as (
           select
             v.visit_id,
+            ${ACUTE_RISK_CARRIER_SELECT},
             to_char(v.prescription_date, 'YYYY-MM-DD') as visit_date,
             coalesce(nullif(btrim(v.practitioner_name), ''), 'Unassigned') as doctor,
             coalesce(nullif(btrim(v.doctor_specialty), ''), 'Unassigned') as specialty
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where $1::int is not null and v.patient_id = $1
         ),
         diagnosis_by_visit as (
@@ -3148,6 +3241,7 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
         )
         select
           a.visit_id as "visitId",
+          a.risk_carrier,
           a.visit_date as "visitDate",
           a.doctor,
           a.specialty,
@@ -3168,12 +3262,14 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
       `, [patientNumber]) : [];
     const patient360ChronicRows = patient360HasChronic ? await dbQuery<Omit<Patient360ChronicReview, 'issues'> & { issues: string[] | null }>(`
         with chronic_base as (
-          select 'pre'::text as phase, cp.week, cp.period, cp.month_order, cp.recommendation, cp.row_data
+          select 'pre'::text as phase, cp.week, cp.period, cp.month_order, ${PatientMasterRepository.riskCarrierSelect('pm_pre')}, cp.recommendation, cp.row_data
           from healpath.chronic_pre cp
+          ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
           where cp.patient_id = $1 or btrim(cp.patient_id) = $1
           union all
-          select 'post'::text as phase, cpo.week, cpo.period, cpo.month_order, cpo.recommendation, cpo.row_data
+          select 'post'::text as phase, cpo.week, cpo.period, cpo.month_order, ${PatientMasterRepository.riskCarrierSelect('pm_post')}, cpo.recommendation, cpo.row_data
           from healpath.chronic_post cpo
+          ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
           where cpo.patient_id = $1 or btrim(cpo.patient_id) = $1
         ),
         chronic_with_issues as (
@@ -3201,6 +3297,7 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
         )
         select
           concat(c.phase, '-', coalesce(c.period, 'Unmapped'), '-', c.week) as id,
+          max(c.risk_carrier) as risk_carrier,
           c.week,
           coalesce(c.period, 'Unmapped') as period,
           c.phase,
@@ -3217,12 +3314,14 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
     // newest visit first.
     const patient360AcuteMedicationRows = patient360HasAcute ? await dbQuery<Patient360AcuteMedicationRow>(`
         with acute_base as (
-          select v.visit_id, to_char(v.prescription_date, 'YYYY-MM-DD') as visit_date
+          select v.visit_id, ${ACUTE_RISK_CARRIER_SELECT}, to_char(v.prescription_date, 'YYYY-MM-DD') as visit_date
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where $1::int is not null and v.patient_id = $1
         )
         select
           concat('acute-', d.id) as id,
+          a.risk_carrier,
           a.visit_date as "visitDate",
           coalesce(nullif(btrim(d.medications), ''), nullif(btrim(d.brand), ''), 'Unspecified medication') as medication,
           coalesce(nullif(btrim(d.ac), ''), '') as "activeIngredient",
@@ -3235,16 +3334,19 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
     // stored (Pre/Post, no aggregation, no deduplication), newest week first.
     const patient360ChronicMedicationRows = patient360HasChronic ? await dbQuery<Patient360ChronicMedicationRow>(`
         with chronic_base as (
-          select 'pre'::text as phase, cp.id, cp.week, cp.period, cp.month_order, cp.medication_name, cp.recommendation
+          select 'pre'::text as phase, cp.id, cp.week, cp.period, cp.month_order, ${PatientMasterRepository.riskCarrierSelect('pm_pre')}, cp.medication_name, cp.recommendation
           from healpath.chronic_pre cp
+          ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
           where cp.patient_id = $1 or btrim(cp.patient_id) = $1
           union all
-          select 'post'::text as phase, cpo.id, cpo.week, cpo.period, cpo.month_order, cpo.medication_name, cpo.recommendation
+          select 'post'::text as phase, cpo.id, cpo.week, cpo.period, cpo.month_order, ${PatientMasterRepository.riskCarrierSelect('pm_post')}, cpo.medication_name, cpo.recommendation
           from healpath.chronic_post cpo
+          ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
           where cpo.patient_id = $1 or btrim(cpo.patient_id) = $1
         )
         select
           concat('chronic-', c.phase, '-', c.id) as id,
+          c.risk_carrier,
           c.week,
           coalesce(c.period, 'Unmapped') as period,
           c.phase,
@@ -3259,12 +3361,14 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
       `, [patient]) : [];
     const patient360IssueRows = patient360HasChronic ? await dbQuery<{ issue: string; phase: 'pre' | 'post'; value: number }>(`
         with chronic_base as (
-          select 'pre'::text as phase, cp.row_data
+          select 'pre'::text as phase, cp.row_data, ${PatientMasterRepository.riskCarrierSelect('pm_pre')}
           from healpath.chronic_pre cp
+          ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
           where cp.patient_id = $1 or btrim(cp.patient_id) = $1
           union all
-          select 'post'::text as phase, cpo.row_data
+          select 'post'::text as phase, cpo.row_data, ${PatientMasterRepository.riskCarrierSelect('pm_post')}
           from healpath.chronic_post cpo
+          ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
           where cpo.patient_id = $1 or btrim(cpo.patient_id) = $1
         )
         select c.phase, btrim(issue_entry.value) as issue, count(*)::int as value
@@ -3279,14 +3383,17 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
         with doctors as (
           select coalesce(nullif(btrim(v.practitioner_name), ''), 'Unassigned') as doctor
           from healpath.visits v
+          ${ACUTE_PATIENT_MASTER_JOIN}
           where $2::int is not null and v.patient_id = $2
           union all
           select ${CHRONIC_CONSULTANT} as doctor
           from healpath.chronic_pre cp
+          ${PatientMasterRepository.chronicJoin('cp', 'pm_pre')}
           where cp.patient_id = $1 or btrim(cp.patient_id) = $1
           union all
           select ${CHRONIC_CONSULTANT} as doctor
           from healpath.chronic_post cpo
+          ${PatientMasterRepository.chronicJoin('cpo', 'pm_post')}
           where cpo.patient_id = $1 or btrim(cpo.patient_id) = $1
         )
         select count(distinct doctor)::int as doctors_seen
@@ -3340,6 +3447,7 @@ export async function getPatient360(filters: Patient360Filters): Promise<Patient
       .filter((row) => row.medication !== 'Unspecified medication').length;
     const patient360Summary: Patient360Summary = {
       patientId: patient,
+      risk_carrier: patient360RiskCarrier,
       firstAcuteVisit: patient360AcuteDates[0] ?? null,
       latestAcuteVisit: patient360AcuteDates[patient360AcuteDates.length - 1] ?? null,
       acuteVisits: patient360AcuteVisits.length,
