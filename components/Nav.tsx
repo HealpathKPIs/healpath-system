@@ -25,6 +25,9 @@ const ICONS: Record<string, ReactNode> = {
   '/performance': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
   ),
+  '/patient-explorer': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 18a8 8 0 1 1 5.3-2" /><path d="m21 21-5.7-5.7" /><path d="M8 9h5" /><path d="M8 12h3" /></svg>
+  ),
   '/patient-360': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" /><circle cx="9.5" cy="7" r="4" /><path d="M19 8v6" /><path d="M22 11h-6" /></svg>
   ),
@@ -50,6 +53,7 @@ const LINKS = [
   { href: '/diagnostics', label: 'Labs & Scans' },
   { href: '/trends', label: 'Trends' },
   { href: '/chronic', label: 'Chronic Care' },
+  { href: '/patient-explorer', label: 'Patient Explorer' },
   { href: '/patient-360', label: 'Patient 360' },
   { href: '/performance', label: 'Performance Matrix' },
   { href: '/admin/import', label: 'Data Import' },
