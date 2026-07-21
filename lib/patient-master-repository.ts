@@ -28,8 +28,12 @@ export class PatientMasterRepository {
     return `left join healpath.patient_master ${patientMasterAlias} on ${patientMasterAlias}.patient_id = ${visitAlias}.patient_id::bigint`;
   }
 
+  static chronicPatientIdExpr(chronicAlias = 'c') {
+    return `cast(nullif(regexp_replace(btrim(coalesce(${chronicAlias}.row_data->>'INDIVIDUAL NUMBER', ${chronicAlias}.row_data->>'Individual NBR', ${chronicAlias}.row_data->>'Patient ID', ${chronicAlias}.row_data->>'PATIENT ID', ${chronicAlias}.patient_id)), '[^0-9]', '', 'g'), '') as bigint)`;
+  }
+
   static chronicJoin(chronicAlias = 'c', patientMasterAlias = 'pm') {
-    return `left join healpath.patient_master ${patientMasterAlias} on ${patientMasterAlias}.patient_id = cast(nullif(btrim(${chronicAlias}.row_data->>'INDIVIDUAL NUMBER'), '') as bigint)`;
+    return `left join healpath.patient_master ${patientMasterAlias} on ${patientMasterAlias}.patient_id = ${PatientMasterRepository.chronicPatientIdExpr(chronicAlias)}`;
   }
 
   static riskCarrierSelect(patientMasterAlias = 'pm') {
