@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { type ChronicCalendarEntry, CHRONIC_CALENDAR_SEED } from '@/lib/chronic-calendar';
 import {
   CHRONIC_SHEETS,
@@ -104,6 +105,7 @@ function PreviewCard({ title, preview }: { title: ChronicSheetName; preview: Chr
 }
 
 export default function ChronicImportCenter() {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>('idle');
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -202,6 +204,9 @@ export default function ChronicImportCenter() {
         durationMs: data.durationMs,
       });
       nextPhase = 'done';
+      // Re-fetch server components so the new weeks/periods and any new
+      // consultants or patients appear across the dashboard without an F5.
+      router.refresh();
     } catch (error) {
       setErrors([(error as Error).message]);
       nextPhase = 'error';

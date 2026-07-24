@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AUTH_COOKIE, authToken } from '@/lib/auth';
 import { PatientMasterService } from '@/lib/patient-master-service';
+import { invalidateDashboardData } from '@/lib/data-refresh';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -54,6 +55,8 @@ export async function POST(req: NextRequest) {
       if (summary.errors.length) {
         return NextResponse.json({ summary, errors: summary.errors }, { status: 422 });
       }
+      // New/changed risk carriers must reach the dropdowns without an F5.
+      invalidateDashboardData();
       const stats = await PatientMasterService.getStats();
       return NextResponse.json({ summary, stats });
     }

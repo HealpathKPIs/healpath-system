@@ -20,6 +20,7 @@ import {
   type ChronicNormalizationLogEntry,
   normalizeChronicRows,
 } from '@/lib/chronic-normalizer';
+import { invalidateDashboardData } from '@/lib/data-refresh';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -429,6 +430,10 @@ export async function POST(req: NextRequest) {
     trace('14. Commit');
     await client.query('commit');
     trace('14b. Commit finished');
+
+    // Expire the filter enumerations and every cached route now that the data is
+    // committed, so the client's router.refresh() cannot read pre-import values.
+    invalidateDashboardData();
 
     trace('15. Response returned (success)');
     return NextResponse.json({

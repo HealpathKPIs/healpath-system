@@ -290,43 +290,40 @@ function snapshotPerformanceMetrics(
   }));
 }
 
-// --- live enumeration cache --------------------------------------------------
-// listMonths/listSpecialties must stay SYNCHRONOUS (they are called synchronously
-// in server components — the (): string[] contract cannot change). We therefore
-// warm a module-level cache from Postgres asynchronously (fire-and-forget,
-// memoised) and the sync accessors return the live cached values once available,
-// falling back to the bundled snapshot until then or if the DB is unreachable.
-let monthsCache: string[] | null = null;
-let specialtiesCache: string[] | null = null;
-let doctorsCache: string[] | null = null;
-let riskCarriersCache: string[] | null = null;
-let enumWarming: Promise<void> | null = null;
+// --- live filter enumerations ------------------------------------------------
+// The filter dropdowns must show what is in the database RIGHT NOW: the moment
+// an import commits, its new months / doctors / specialties / risk carriers have
+// to appear without a browser refresh (F5) and without a server restart.
+//
+// The previous implementation memoised these lists in module scope for the whole
+// process lifetime (`enumWarming` was created once and never reset), so a warm
+// server kept serving pre-import values forever. This cache instead:
+//   * expires after ENUM_TTL_MS, so writes this process did not make (the CLI
+//     importer, a second serverless instance) still surface on their own;
+//   * is dropped instantly by invalidateFilterOptions(), which every import
+//     route calls the moment it commits;
+//   * collapses concurrent refreshes into one query (a page render calls this
+//     from several components at once);
+//   * keeps the last known-good lists — and finally the bundled snapshot — if the
+//     database is unreachable, so a blip never empties the dropdowns.
+//
+// The three enumerations cost ~140ms in parallel, which is why they can be read
+// live per render instead of being frozen for the life of the process.
+const ENUM_TTL_MS = 15_000;
 
-async function refreshEnumerations(): Promise<void> {
-  if (!hasDb) return;
-  try {
-    const [months, specialties, doctors, riskCarriers] = await Promise.all([
-      dbQuery<{ month_year: string }>(
-        `select distinct v.month_year from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year like '2026-%' order by v.month_year`,
-      ),
-      dbQuery<{ s: string }>(
-        `select distinct btrim(v.doctor_specialty) as s from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ` +
-          "where v.month_year like '2026-%' and v.doctor_specialty is not null and btrim(v.doctor_specialty) <> '' order by 1",
-      ),
-      dbQuery<{ d: string }>(
-        `select distinct btrim(v.practitioner_name) as d from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} ` +
-          "where v.month_year like '2026-%' and v.practitioner_name is not null and btrim(v.practitioner_name) <> '' order by 1",
-      ),
-      PatientMasterService.getAllRiskCarriers(),
-    ]);
-    if (months.length) monthsCache = months.map((r) => r.month_year);
-    if (specialties.length) specialtiesCache = specialties.map((r) => r.s);
-    if (doctors.length) doctorsCache = doctors.map((r) => r.d);
-    riskCarriersCache = riskCarriers;
-  } catch (e) {
-    console.warn('listMonths/listSpecialties/listDoctors/listRiskCarriers live refresh failed, snapshot retained:', (e as Error).message);
-  }
+export interface FilterOptions {
+  months: string[];
+  specialties: string[];
+  doctors: string[];
+  riskCarriers: string[];
 }
+
+let enumCache: FilterOptions | null = null;
+let enumCachedAt = 0;
+let enumInFlight: Promise<FilterOptions> | null = null;
+// Bumped by every invalidation so a refresh that was already in flight when the
+// import committed cannot write its pre-import values back into the cache.
+let enumGeneration = 0;
 
 // Snapshot fallback for the doctor list (the bundled snapshot only carries the
 // top-20 doctor matrix, which is enough until the live cache warms / if DB down).
@@ -334,38 +331,84 @@ function snapshotDoctors(): string[] {
   return [...new Set((snapshot.all.doctors as DoctorRow[]).map((d) => d.practitioner))].sort();
 }
 
-// Warm once; safe to call from the sync accessors (non-blocking) or to await in tests.
-export function warmEnumerations(): Promise<void> {
-  if (!enumWarming) enumWarming = refreshEnumerations();
-  return enumWarming;
+function snapshotOptions(): FilterOptions {
+  return {
+    months: snapshot.months as string[],
+    specialties: snapshot.specialties as string[],
+    doctors: snapshotDoctors(),
+    riskCarriers: [],
+  };
 }
 
-export function listMonths(): string[] {
-  if (hasDb) void warmEnumerations();
-  return monthsCache ?? (snapshot.months as string[]);
+/**
+ * Drop the cached filter enumerations. Called after every successful import so
+ * the very next render re-reads months/doctors/specialties/risk carriers.
+ */
+export function invalidateFilterOptions(): void {
+  enumCache = null;
+  enumCachedAt = 0;
+  enumInFlight = null;
+  enumGeneration += 1;
 }
-export function listSpecialties(): string[] {
-  if (hasDb) void warmEnumerations();
-  return specialtiesCache ?? (snapshot.specialties as string[]);
+
+async function fetchFilterOptions(): Promise<FilterOptions> {
+  // No month_year year filter: a freshly imported month must appear whatever
+  // year it belongs to. No patient_master join either — it is a LEFT JOIN on a
+  // primary key, so it cannot add or remove rows from a DISTINCT enumeration.
+  const [months, specialties, doctors, riskCarriers] = await Promise.all([
+    dbQuery<{ month_year: string }>(
+      'select distinct v.month_year from healpath.visits v ' +
+        "where v.month_year is not null and btrim(v.month_year) <> '' order by v.month_year",
+    ),
+    dbQuery<{ s: string }>(
+      'select distinct btrim(v.doctor_specialty) as s from healpath.visits v ' +
+        "where v.doctor_specialty is not null and btrim(v.doctor_specialty) <> '' order by 1",
+    ),
+    dbQuery<{ d: string }>(
+      'select distinct btrim(v.practitioner_name) as d from healpath.visits v ' +
+        "where v.practitioner_name is not null and btrim(v.practitioner_name) <> '' order by 1",
+    ),
+    PatientMasterService.getAllRiskCarriers(),
+  ]);
+  const previous = enumCache ?? snapshotOptions();
+  // An empty result is treated as "could not enumerate" rather than "no data":
+  // keep the previous list instead of blanking a dropdown (and, with it, the
+  // user's current selection — FilterBar resets selections that vanish).
+  return {
+    months: months.length ? months.map((r) => r.month_year) : previous.months,
+    specialties: specialties.length ? specialties.map((r) => r.s) : previous.specialties,
+    doctors: doctors.length ? doctors.map((r) => r.d) : previous.doctors,
+    riskCarriers,
+  };
 }
-export function listDoctors(): string[] {
-  if (hasDb) void warmEnumerations();
-  return doctorsCache ?? snapshotDoctors();
-}
-export function listRiskCarriers(): string[] {
-  if (hasDb) void warmEnumerations();
-  return riskCarriersCache ?? [];
-}
-export async function getRiskCarrierOptions(): Promise<string[]> {
-  if (!hasDb) return riskCarriersCache ?? [];
-  try {
-    const riskCarriers = await PatientMasterService.getAllRiskCarriers();
-    riskCarriersCache = riskCarriers;
-    return riskCarriers;
-  } catch (e) {
-    console.warn('getRiskCarrierOptions live query failed:', (e as Error).message);
-    return riskCarriersCache ?? [];
+
+/** Live filter dropdown values (months, specialties, doctors, risk carriers). */
+export async function getFilterOptions(): Promise<FilterOptions> {
+  if (!hasDb) return enumCache ?? snapshotOptions();
+  if (enumCache && Date.now() - enumCachedAt < ENUM_TTL_MS) return enumCache;
+  if (!enumInFlight) {
+    const generation = enumGeneration;
+    enumInFlight = fetchFilterOptions()
+      .then((options) => {
+        if (generation === enumGeneration) {
+          enumCache = options;
+          enumCachedAt = Date.now();
+        }
+        return options;
+      })
+      .catch((e) => {
+        console.warn('filter options refresh failed, previous values retained:', (e as Error).message);
+        return enumCache ?? snapshotOptions();
+      })
+      .finally(() => {
+        enumInFlight = null;
+      });
   }
+  return enumInFlight;
+}
+
+export async function getRiskCarrierOptions(): Promise<string[]> {
+  return (await getFilterOptions()).riskCarriers;
 }
 
 export async function getKpis(f: Filters): Promise<Kpis> {
@@ -1883,7 +1926,7 @@ const CHRONIC_KPI_LABELS = [
 function emptyChronicData(filters: Required<ChronicOverviewFilters>): ChronicOverviewData {
   return {
     filters,
-    options: { periods: [], weeks: [], consultants: [], recommendations: [], issues: [], medications: [], riskCarriers: riskCarriersCache ?? [] },
+    options: { periods: [], weeks: [], consultants: [], recommendations: [], issues: [], medications: [], riskCarriers: enumCache?.riskCarriers ?? [] },
     currentPeriod: null,
     previousPeriod: null,
     kpis: CHRONIC_KPI_LABELS.map((label) => ({

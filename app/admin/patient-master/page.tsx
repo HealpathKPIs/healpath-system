@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 type Phase = 'idle' | 'previewing' | 'ready' | 'importing' | 'done' | 'error';
 
@@ -76,6 +77,7 @@ function SummaryPanel({ summary, phase }: { summary: Summary | null; phase: Phas
 }
 
 export default function PatientMasterPage() {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>('idle');
   const [file, setFile] = useState<File | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -147,6 +149,9 @@ export default function PatientMasterPage() {
       setStats(data.stats);
       setMessage('Patient Master import completed successfully.');
       setPhase('done');
+      // Re-fetch server components so new risk carriers reach the dashboard
+      // filters immediately (the route handler already expired the caches).
+      router.refresh();
     } catch {
       setMessage('Patient Master import failed. Please try again.');
       setPhase('error');

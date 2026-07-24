@@ -1,6 +1,6 @@
 import { dbQuery, hasDb } from './pg';
 import { PatientMasterRepository } from './patient-master-repository';
-import { getRiskCarrierOptions, listDoctors, listMonths, listSpecialties } from './queries';
+import { getFilterOptions } from './queries';
 import type { RankRow } from './types';
 
 const CHRONIC_CONSULTANT = "coalesce(nullif(btrim(row_data->>'Consultant Name'), ''), 'Unassigned')";
@@ -323,15 +323,15 @@ async function getConsultants() {
 }
 
 export async function getPatientExplorerOptions(): Promise<PatientExplorerOptions> {
-  const [riskCarriers, consultants] = await Promise.all([
-    getRiskCarrierOptions(),
+  const [filterOptions, consultants] = await Promise.all([
+    getFilterOptions(),
     getConsultants().catch(() => []),
   ]);
   return {
-    months: listMonths(),
-    doctors: listDoctors(),
-    specialties: listSpecialties(),
-    riskCarriers,
+    months: filterOptions.months,
+    doctors: filterOptions.doctors,
+    specialties: filterOptions.specialties,
+    riskCarriers: filterOptions.riskCarriers,
     consultants,
   };
 }

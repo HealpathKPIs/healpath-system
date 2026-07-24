@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 // Admin → Data Import. UI ONLY — parsing/loading is the existing importer
 // (lib/import-core.mjs, shared with scripts/pg-import.mjs) behind /api/admin/import.
@@ -27,6 +28,7 @@ const HISTORY_KEY = 'hp-upload-history';
 const HISTORY_MAX = 10;
 
 export default function DataImport() {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>('idle');
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Counts | null>(null);
@@ -98,6 +100,10 @@ export default function DataImport() {
             setPhase('done');
             const rows = Object.values(ev.loaded as Counts).reduce((a, b) => a + b, 0);
             recordUpload({ date: new Date().toISOString(), file: file.name, status: 'Completed', rows, durationMs: ev.durationMs });
+            // Drop the browser's Router Cache and re-fetch the server components,
+            // so every dashboard reflects this import without an F5. The route
+            // handler has already expired the server caches by this point.
+            router.refresh();
           } else if (ev.stage === 'error') {
             setError(ev.message); setPhase('error');
             recordUpload({ date: new Date().toISOString(), file: file.name, status: 'Failed', rows: 0, durationMs: 0 });
@@ -204,7 +210,7 @@ export default function DataImport() {
                 <b>{(doneInfo.durationMs / 1000).toFixed(1)}s</b>
               </div>
             </div>
-            <button type="button" onClick={() => { window.location.href = '/'; }}
+            <button type="button" onClick={() => { router.refresh(); router.push('/'); }}
               style={{ marginTop: 14, width: '100%', height: 42, border: 0, borderRadius: 10, background: 'linear-gradient(180deg, #1e293b, #0f172a)', color: '#fff', fontSize: 13.5, fontWeight: 650, cursor: 'pointer' }}>
               Refresh Dashboard
             </button>

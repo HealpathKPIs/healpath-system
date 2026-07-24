@@ -1,6 +1,6 @@
 import FilterBar from '@/components/FilterBar';
 import { ExecutiveScenarioLayer } from '@/components/ExecutiveExperience';
-import { getDiagnostics, getDrugs, getKpis, getPerformanceEntityMetrics, getTrends, listDoctors, listSpecialties, getRiskCarrierOptions, resolveFilters } from '@/lib/queries';
+import { getDiagnostics, getDrugs, getKpis, getPerformanceEntityMetrics, getTrends, getFilterOptions, resolveFilters } from '@/lib/queries';
 import PerformanceMatrixClient, { type MatrixCell, type MatrixRow, type MatrixTab } from './PerformanceMatrixClient';
 import { Suspense } from 'react';
 
@@ -79,20 +79,20 @@ export default async function PerformanceMatrix({ searchParams }: {
 }) {
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
 
-  const [k, drugs, diagnostics, trends, peerKpis, riskCarriers] = await Promise.all([
+  const [k, drugs, diagnostics, trends, peerKpis, filterOptions] = await Promise.all([
     getKpis(f),
     getDrugs(f),
     getDiagnostics(f),
     getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier),
     f.doctor ? getKpis({ ...f, doctor: null }) : Promise.resolve(null),
-    getRiskCarrierOptions(),
+    getFilterOptions(),
   ]);
   const allMonths = trends.points.map((point) => point.month);
   const months = f.month ? [f.month].filter((month) => allMonths.includes(month)) : allMonths;
   const safeMonths = months.length ? months : allMonths;
 
-  const doctors = f.doctor ? [f.doctor] : listDoctors();
-  const specialties = f.specialty ? [f.specialty] : listSpecialties();
+  const doctors = f.doctor ? [f.doctor] : filterOptions.doctors;
+  const specialties = f.specialty ? [f.specialty] : filterOptions.specialties;
   const medications = (f.drug ? [f.drug] : drugs.ac.map((row) => row.label)).slice(0, 15);
   const laboratories = diagnostics.labs.map((row) => row.label).slice(0, 10);
   const scans = diagnostics.scans.map((row) => row.label).slice(0, 10);
@@ -129,7 +129,13 @@ export default async function PerformanceMatrix({ searchParams }: {
           <p className="muted" style={{ margin: '8px 0 0' }}>Executive comparison across doctors, specialties, medications, laboratories, and scans.</p>
         </div>
         <Suspense fallback={<div className="filters"><div className="skeleton-line" style={{ width: 150, height: 28 }} /></div>}>
-          <FilterBar months={allMonths} specialties={listSpecialties()} doctors={listDoctors()} riskCarriers={riskCarriers} />
+          <FilterBar
+            months={filterOptions.months.length ? filterOptions.months : allMonths}
+            monthsLive={filterOptions.months.length > 0}
+            specialties={filterOptions.specialties}
+            doctors={filterOptions.doctors}
+            riskCarriers={filterOptions.riskCarriers}
+          />
         </Suspense>
       </div>
       <PerformanceMatrixClient

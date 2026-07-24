@@ -6,7 +6,7 @@ import { ExecutiveFeed, ExecutiveScenarioLayer, ExplainButton } from '@/componen
 import AnimatedNumber from '@/components/AnimatedNumber';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
-import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, listSpecialties, listDoctors, getRiskCarrierOptions, resolveFilters } from '@/lib/queries';
+import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, getFilterOptions, resolveFilters } from '@/lib/queries';
 import type { Filters, Kpis, RankRow, TrendResponse } from '@/lib/types';
 
 function OverviewKpi({ label, value, delta, tone }: { label: string; value: string | number; delta?: number; tone: string }) {
@@ -220,9 +220,9 @@ function monthsFromTrend(trends: TrendResponse) {
 
 export default async function Overview({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string } }) {
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
-  const [k, diseases, drugs, trends, riskCarriers] = await Promise.all([
+  const [k, diseases, drugs, trends, filterOptions] = await Promise.all([
     getKpis(f), getDiseases(f, 5), getDrugs(f), getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier),
-    getRiskCarrierOptions(),
+    getFilterOptions(),
   ]);
   const latestMonth = trends.points[trends.points.length - 1]?.month ?? null;
   const previousMonth = trends.points[trends.points.length - 2]?.month ?? null;
@@ -259,7 +259,13 @@ export default async function Overview({ searchParams }: { searchParams: { month
           <p className="overview-subtitle">Executive utilization summary for the 2026 reporting window</p>
         </div>
         <Suspense fallback={<div className="filters"><div className="skeleton-line" style={{ width: 150, height: 28 }} /><div className="skeleton-line" style={{ width: 150, height: 28 }} /></div>}>
-          <FilterBar months={monthsFromTrend(trends)} specialties={listSpecialties()} doctors={listDoctors()} riskCarriers={riskCarriers} />
+          <FilterBar
+            months={filterOptions.months.length ? filterOptions.months : monthsFromTrend(trends)}
+            monthsLive={filterOptions.months.length > 0}
+            specialties={filterOptions.specialties}
+            doctors={filterOptions.doctors}
+            riskCarriers={filterOptions.riskCarriers}
+          />
         </Suspense>
       </div>
 

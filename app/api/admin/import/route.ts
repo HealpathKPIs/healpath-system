@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 // @ts-ignore — plain ESM module shared verbatim with the CLI importer (single source of truth)
 import { parseWorkbook, loadDatabase } from '@/lib/import-core.mjs';
+import { invalidateDashboardData } from '@/lib/data-refresh';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,6 +36,9 @@ export async function POST(req: NextRequest) {
         const result = await loadDatabase(parsed, {
           onProgress: (p: { table: string; inserted: number; total: number }) => send({ stage: 'progress', ...p }),
         });
+        // Expire filters + every cached route BEFORE announcing completion, so the
+        // client's router.refresh() on `done` can only read post-import data.
+        invalidateDashboardData();
         send({ stage: 'done', loaded: result.loaded, durationMs: result.loadMs, skips: parsed.skips });
       } catch (e) {
         send({ stage: 'error', message: (e as Error).message });

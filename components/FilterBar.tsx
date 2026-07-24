@@ -22,11 +22,18 @@ export default function FilterBar({
   specialties,
   doctors,
   riskCarriers,
+  monthsLive = false,
 }: {
   months: string[];
   specialties: string[];
   doctors: string[];
   riskCarriers: string[];
+  /**
+   * True when `months` is the live database enumeration rather than a page's own
+   * (already filtered) chart months. Only a live list is authoritative enough to
+   * reset a month selection that no longer exists.
+   */
+  monthsLive?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -34,6 +41,31 @@ export default function FilterBar({
   const { selection, setSelection } = useDashboard();
   const doctor = params.get('doctor') ?? '';
   const [compareOpen, setCompareOpen] = useState(false);
+
+  // Selections survive an import whenever the value still exists. When an import
+  // removes one (a doctor who left, a risk carrier that was renamed) the filter
+  // would otherwise keep querying a value that is gone and show an empty
+  // dashboard, so it falls back to "All" and the URL is rewritten to match.
+  // An empty list means "could not enumerate" — never reset on that.
+  useEffect(() => {
+    const stale: string[] = [];
+    if (monthsLive && months.length && params.get('month') && !months.includes(params.get('month')!)) stale.push('month');
+    if (specialties.length && params.get('specialty') && !specialties.includes(params.get('specialty')!)) stale.push('specialty');
+    if (doctors.length && params.get('doctor') && !doctors.includes(params.get('doctor')!)) stale.push('doctor');
+    if (riskCarriers.length && params.get('riskCarrier') && !riskCarriers.includes(params.get('riskCarrier')!)) stale.push('riskCarrier');
+    if (!stale.length) return;
+
+    const next = new URLSearchParams(params.toString());
+    for (const key of stale) next.delete(key);
+    if (stale.includes('doctor') && next.get('sel') === 'doctor') {
+      next.delete('sel');
+      next.delete('selv');
+    }
+    const query = next.toString();
+    // replace(), not push(): a filter value that no longer exists should not be
+    // reachable with the Back button.
+    router.replace(query ? `${pathname}?${query}` : pathname);
+  }, [months, specialties, doctors, riskCarriers, monthsLive, params, pathname, router]);
 
   useEffect(() => {
     if (doctor) {
