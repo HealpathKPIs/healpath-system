@@ -12,7 +12,7 @@ export default async function Diseases({ searchParams }: { searchParams: { month
   const months = trends.points.map((point) => point.month);
   return (
     <>
-      <PageHead title="Disease & Diagnosis" months={months} />
+      <PageHead title="Disease & Diagnosis" months={months} selection={f} />
       <div className="grid two" style={{ marginBottom: 18 }}>
         <div className="card">
           <p className="section-title">Diagnoses by ICD block</p>

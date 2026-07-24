@@ -19,7 +19,7 @@ export default async function Doctors({ searchParams }: { searchParams: { month?
 
   return (
     <>
-      <PageHead title="Doctor & Specialty" months={trends.points.map((point) => point.month)} />
+      <PageHead title="Doctor & Specialty" months={trends.points.map((point) => point.month)} selection={f} />
 
       <div className="grid kpirow" style={{ marginBottom: 20 }}>
         <KpiCard label="Total Visits" value={k.visits.toLocaleString()} />

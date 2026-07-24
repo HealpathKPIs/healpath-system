@@ -1,6 +1,6 @@
 import FilterBar from '@/components/FilterBar';
 import { ExecutiveScenarioLayer } from '@/components/ExecutiveExperience';
-import { getDiagnostics, getDrugs, getKpis, getPerformanceEntityMetrics, getTrends, getFilterOptions, resolveFilters } from '@/lib/queries';
+import { getDiagnostics, getDrugs, getKpis, getPerformanceEntityMetrics, getTrends, getCascadingFilterOptions, resolveFilters } from '@/lib/queries';
 import PerformanceMatrixClient, { type MatrixCell, type MatrixRow, type MatrixTab } from './PerformanceMatrixClient';
 import { Suspense } from 'react';
 
@@ -85,7 +85,7 @@ export default async function PerformanceMatrix({ searchParams }: {
     getDiagnostics(f),
     getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier),
     f.doctor ? getKpis({ ...f, doctor: null }) : Promise.resolve(null),
-    getFilterOptions(),
+    getCascadingFilterOptions(f),
   ]);
   const allMonths = trends.points.map((point) => point.month);
   const months = f.month ? [f.month].filter((month) => allMonths.includes(month)) : allMonths;

@@ -8,7 +8,7 @@ export default async function Trends({ searchParams }: { searchParams: { month?:
   const trends = await getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier);
   return (
     <>
-      <PageHead title="Trends" months={trends.points.map((point) => point.month)} />
+      <PageHead title="Trends" months={trends.points.map((point) => point.month)} selection={f} />
       <div className="card" style={{ marginBottom: 18 }}>
         <p className="section-title">Average per visit by month</p>
         <TrendLine points={trends.points} delta={trends.delta} />

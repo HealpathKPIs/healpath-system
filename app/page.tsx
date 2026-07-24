@@ -6,7 +6,7 @@ import { ExecutiveFeed, ExecutiveScenarioLayer, ExplainButton } from '@/componen
 import AnimatedNumber from '@/components/AnimatedNumber';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
-import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, getFilterOptions, resolveFilters } from '@/lib/queries';
+import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, getCascadingFilterOptions, resolveFilters } from '@/lib/queries';
 import type { Filters, Kpis, RankRow, TrendResponse } from '@/lib/types';
 
 function OverviewKpi({ label, value, delta, tone }: { label: string; value: string | number; delta?: number; tone: string }) {
@@ -222,7 +222,7 @@ export default async function Overview({ searchParams }: { searchParams: { month
   const f = resolveFilters(searchParams, { doctor: true, drug: true, disease: true });
   const [k, diseases, drugs, trends, filterOptions] = await Promise.all([
     getKpis(f), getDiseases(f, 5), getDrugs(f), getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier),
-    getFilterOptions(),
+    getCascadingFilterOptions(f),
   ]);
   const latestMonth = trends.points[trends.points.length - 1]?.month ?? null;
   const previousMonth = trends.points[trends.points.length - 2]?.month ?? null;

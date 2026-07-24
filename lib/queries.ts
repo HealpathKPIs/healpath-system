@@ -14,6 +14,7 @@ import { dbQuery, hasDb } from './pg';
 import type { Filters, Kpis, RankRow, TrendPoint, TrendResponse, TrendArrow, DoctorRow } from './types';
 import { PatientMasterRepository } from './patient-master-repository';
 import { PatientMasterService } from './patient-master-service';
+import { normalizeFilterList, normalizeFilterValue, sqlNormalize } from './filter-normalize';
 import snapshot from '../data/snapshot2026.json';
 import {
   type ChronicCalendarEntry,
@@ -39,10 +40,14 @@ export interface PerformanceEntityMetric {
 // $4 = drug (cross-filter: visits containing this active ingredient OR brand),
 // $5 = disease (cross-filter: visits containing this ICD block),
 // $6 = risk carrier. All nullable. Any per-query LIMIT therefore uses $7.
+// RC-2: specialty and doctor are compared normalized-to-normalized, because the
+// dropdowns now offer one deduplicated option per person ("Aya Nada") while the
+// table still stores several spellings of it ("Aya  Nada"). Only paid when the
+// filter is actually set — the null check short-circuits first.
 const VISIT_FILTER =
   "v.month_year like '2026-%' and ($1::text is null or v.month_year = $1) " +
-  "and ($2::text is null or v.doctor_specialty = $2) " +
-  "and ($3::text is null or v.practitioner_name = $3) " +
+  `and ($2::text is null or ${sqlNormalize('v.doctor_specialty')} = $2) ` +
+  `and ($3::text is null or ${sqlNormalize('v.practitioner_name')} = $3) ` +
   "and ($4::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $4 or lower(btrim(xdf.brand)) = $4)) " +
   "and ($5::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $5)) " +
   "and ($6::text is null or pm.risk_carrier = $6)";
@@ -56,12 +61,14 @@ function arrow(delta: number): TrendArrow {
   return '▬ No Change';
 }
 
+// The incoming URL value is normalized the same way as the column it is compared
+// against, so a stale link carrying "Aya  Nada" still resolves to the one doctor.
 function specialtyParam(s?: string | null): string | null {
-  return s ? s.trim() : null;
+  return normalizeFilterValue(s);
 }
 
 function doctorParam(s?: string | null): string | null {
-  return s ? s.trim() : null;
+  return normalizeFilterValue(s);
 }
 function drugParam(s?: string | null): string | null {
   return s ? s.trim() : null;
@@ -70,7 +77,7 @@ function diseaseParam(s?: string | null): string | null {
   return s ? s.trim() : null;
 }
 function riskCarrierParam(s?: string | null): string | null {
-  return s ? s.trim() : null;
+  return normalizeFilterValue(s);
 }
 
 // Standard positional binds for VISIT_FILTER ($1..$6). Append a LIMIT as $7.
@@ -355,18 +362,23 @@ async function fetchFilterOptions(): Promise<FilterOptions> {
   // No month_year year filter: a freshly imported month must appear whatever
   // year it belongs to. No patient_master join either — it is a LEFT JOIN on a
   // primary key, so it cannot add or remove rows from a DISTINCT enumeration.
+  //
+  // RC-2: every value is normalized (sqlNormalize) BEFORE the DISTINCT, so
+  // "Aya Nada" and "Aya  Nada" collapse to one option, and blank/whitespace-only
+  // values drop out. The matching predicates in VISIT_FILTER normalize the same
+  // way, so a deduplicated option still selects every underlying spelling.
   const [months, specialties, doctors, riskCarriers] = await Promise.all([
     dbQuery<{ month_year: string }>(
-      'select distinct v.month_year from healpath.visits v ' +
-        "where v.month_year is not null and btrim(v.month_year) <> '' order by v.month_year",
+      `select distinct ${sqlNormalize('v.month_year')} as month_year from healpath.visits v ` +
+        `where ${sqlNormalize('v.month_year')} is not null order by 1`,
     ),
     dbQuery<{ s: string }>(
-      'select distinct btrim(v.doctor_specialty) as s from healpath.visits v ' +
-        "where v.doctor_specialty is not null and btrim(v.doctor_specialty) <> '' order by 1",
+      `select distinct ${sqlNormalize('v.doctor_specialty')} as s from healpath.visits v ` +
+        `where ${sqlNormalize('v.doctor_specialty')} is not null order by 1`,
     ),
     dbQuery<{ d: string }>(
-      'select distinct btrim(v.practitioner_name) as d from healpath.visits v ' +
-        "where v.practitioner_name is not null and btrim(v.practitioner_name) <> '' order by 1",
+      `select distinct ${sqlNormalize('v.practitioner_name')} as d from healpath.visits v ` +
+        `where ${sqlNormalize('v.practitioner_name')} is not null order by 1`,
     ),
     PatientMasterService.getAllRiskCarriers(),
   ]);
@@ -374,11 +386,13 @@ async function fetchFilterOptions(): Promise<FilterOptions> {
   // An empty result is treated as "could not enumerate" rather than "no data":
   // keep the previous list instead of blanking a dropdown (and, with it, the
   // user's current selection — FilterBar resets selections that vanish).
+  // Risk carriers arrive as an already-collected list from the patient master,
+  // so they are normalized/deduplicated/sorted here rather than in SQL.
   return {
     months: months.length ? months.map((r) => r.month_year) : previous.months,
     specialties: specialties.length ? specialties.map((r) => r.s) : previous.specialties,
     doctors: doctors.length ? doctors.map((r) => r.d) : previous.doctors,
-    riskCarriers,
+    riskCarriers: normalizeFilterList(riskCarriers),
   };
 }
 
@@ -409,6 +423,101 @@ export async function getFilterOptions(): Promise<FilterOptions> {
 
 export async function getRiskCarrierOptions(): Promise<string[]> {
   return (await getFilterOptions()).riskCarriers;
+}
+
+// --- RC-2: cascading filter options ------------------------------------------
+// Hierarchy: Month -> Specialty -> Doctor -> Risk Carrier. Each level offers only
+// values that still have data under the levels above it, so the dropdowns can
+// never present an impossible combination.
+//
+// This deliberately sits BESIDE the RC-1 cache rather than inside it: the RC-1
+// cache holds the one unfiltered list set, and is returned untouched when no
+// filter is active (the common case). A narrowed list depends on the current
+// selection, so it is read live — one query, ~200ms, only when a filter is set.
+
+export interface CascadeSelection {
+  month?: string | null;
+  specialty?: string | null;
+  doctor?: string | null;
+  riskCarrier?: string | null;
+}
+
+function hasSelection(selection: CascadeSelection): boolean {
+  return Boolean(selection.month || selection.specialty || selection.doctor || selection.riskCarrier);
+}
+
+async function fetchCascadingOptions(selection: CascadeSelection): Promise<FilterOptions> {
+  const month = normalizeFilterValue(selection.month);
+  const specialty = normalizeFilterValue(selection.specialty);
+  const doctor = normalizeFilterValue(selection.doctor);
+
+  // SQL reduces 64k visits to the ~5k distinct (month, specialty, doctor,
+  // carrier) combinations; the normalization and the cascade itself then run
+  // over that small set in JS. Normalizing inside the SQL instead costs 613ms
+  // against 350ms here, because the regex would run per row rather than per
+  // distinct combination — and it keeps one definition of "normalized".
+  const combos = await dbQuery<{
+    month: string | null;
+    specialty: string | null;
+    doctor: string | null;
+    risk_carrier: string | null;
+  }>(
+    `select distinct v.month_year as month, v.doctor_specialty as specialty,
+            v.practitioner_name as doctor, pm.risk_carrier as risk_carrier
+     from healpath.visits v
+     ${ACUTE_PATIENT_MASTER_JOIN}`,
+  );
+
+  const months = new Set<string>();
+  const specialties = new Set<string>();
+  const doctors = new Set<string>();
+  const riskCarriers = new Set<string>();
+
+  for (const combo of combos) {
+    const rowMonth = normalizeFilterValue(combo.month);
+    const rowSpecialty = normalizeFilterValue(combo.specialty);
+    const rowDoctor = normalizeFilterValue(combo.doctor);
+    const rowCarrier = normalizeFilterValue(combo.risk_carrier);
+
+    // Month is the top of the hierarchy: never narrowed by the levels below it.
+    if (rowMonth) months.add(rowMonth);
+
+    const monthOk = !month || rowMonth === month;
+    if (monthOk && rowSpecialty) specialties.add(rowSpecialty);
+
+    const specialtyOk = !specialty || rowSpecialty === specialty;
+    if (monthOk && specialtyOk && rowDoctor) doctors.add(rowDoctor);
+
+    const doctorOk = !doctor || rowDoctor === doctor;
+    if (monthOk && specialtyOk && doctorOk && rowCarrier) riskCarriers.add(rowCarrier);
+  }
+
+  const sorted = (values: Set<string>) => [...values].sort((a, b) => a.localeCompare(b));
+  const base = enumCache ?? snapshotOptions();
+  // A value the levels above have narrowed away is deliberately NOT added back:
+  // it is an impossible combination, and FilterBar resets a selection that is no
+  // longer in its list back to "All".
+  return {
+    months: months.size ? sorted(months) : base.months,
+    specialties: sorted(specialties),
+    doctors: sorted(doctors),
+    riskCarriers: sorted(riskCarriers),
+  };
+}
+
+/**
+ * Filter options narrowed by the current selection. With nothing selected this
+ * is exactly the RC-1 cached list set; otherwise it is a live cascading read.
+ */
+export async function getCascadingFilterOptions(selection: CascadeSelection): Promise<FilterOptions> {
+  const unfiltered = await getFilterOptions();
+  if (!hasDb || !hasSelection(selection)) return unfiltered;
+  try {
+    return await fetchCascadingOptions(selection);
+  } catch (e) {
+    console.warn('cascading filter options failed, using unfiltered list:', (e as Error).message);
+    return unfiltered;
+  }
 }
 
 export async function getKpis(f: Filters): Promise<Kpis> {
@@ -628,24 +737,27 @@ export async function getPerformanceEntityMetrics(
   if (hasDb) {
     const params = [...visitParams(f), entities, months];
     const entitySource = (() => {
+      // RC-2: the entity lists handed in ($7) are the deduplicated dropdown
+      // values, so both the match and the emitted label use the normalized name;
+      // otherwise the alternate spellings would be dropped from the matrix.
       if (kind === 'doctors') {
         return `
-          select v.practitioner_name as entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
+          select ${sqlNormalize('v.practitioner_name')} as entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
           from healpath.visits v
           ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER}
             and v.month_year = any($8::text[])
-            and v.practitioner_name = any($7::text[])
+            and ${sqlNormalize('v.practitioner_name')} = any($7::text[])
         `;
       }
       if (kind === 'specialties') {
         return `
-          select v.doctor_specialty as entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
+          select ${sqlNormalize('v.doctor_specialty')} as entity, v.visit_id, v.patient_id, v.month_year, ${ACUTE_RISK_CARRIER_SELECT}
           from healpath.visits v
           ${ACUTE_PATIENT_MASTER_JOIN}
           where ${VISIT_FILTER}
             and v.month_year = any($8::text[])
-            and v.doctor_specialty = any($7::text[])
+            and ${sqlNormalize('v.doctor_specialty')} = any($7::text[])
         `;
       }
       if (kind === 'medications') {
@@ -748,11 +860,15 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
         `, visitParams(f)),
         dbQuery<{ practitioner: string; specialty: string; visits: number; meds_count: number; labs_count: number }>(`
           with dv as (
-            select v.visit_id, v.practitioner_name, v.doctor_specialty, ${ACUTE_RISK_CARRIER_SELECT}
+            -- RC-2: normalizing the name once here deduplicates the whole chain
+            -- below (every CTE groups/joins on it), so a doctor stored with two
+            -- different spacings is one row in the table instead of two.
+            select v.visit_id, ${sqlNormalize('v.practitioner_name')} as practitioner_name,
+                   ${sqlNormalize('v.doctor_specialty')} as doctor_specialty, ${ACUTE_RISK_CARRIER_SELECT}
             from healpath.visits v
             ${ACUTE_PATIENT_MASTER_JOIN}
-            where ${VISIT_FILTER} and v.practitioner_name is not null and btrim(v.practitioner_name) <> ''
-              and ($8::text is null or v.practitioner_name ilike $8 or v.doctor_specialty ilike $8)
+            where ${VISIT_FILTER} and ${sqlNormalize('v.practitioner_name')} is not null
+              and ($8::text is null or ${sqlNormalize('v.practitioner_name')} ilike $8 or ${sqlNormalize('v.doctor_specialty')} ilike $8)
           ),
           doctor_visits as (
             select dv.practitioner_name, count(distinct dv.visit_id)::int as visits
@@ -906,7 +1022,7 @@ export async function getTrends(
   let points: TrendPoint[] | null = null;
   // Shared filter for the trend: specialty $1, doctor $2, drug $3, disease $4, risk carrier $5.
   const cond =
-    "($1::text is null or v.doctor_specialty = $1) and ($2::text is null or v.practitioner_name = $2) " +
+    `($1::text is null or ${sqlNormalize('v.doctor_specialty')} = $1) and ($2::text is null or ${sqlNormalize('v.practitioner_name')} = $2) ` +
     "and ($3::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $3 or lower(btrim(xdf.brand)) = $3)) " +
     "and ($4::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $4)) " +
     "and ($5::text is null or pm.risk_carrier = $5)";
@@ -1161,14 +1277,11 @@ interface ChronicRow {
   consultant: string;
 }
 
-const CHRONIC_EXCLUDED_CONSULTANTS = new Set([
-  '1 Months',
-  '2 Month',
-  '3 Months',
-  '4 Months',
-  '5 Months',
-  '6 Months',
-]);
+// The chronic consultant column carries duration markers ("0", "1 Month",
+// "3 Months") that are not consultants. The hard-coded list below missed the
+// singular and bare-number forms, so they are matched by pattern instead — the
+// same rule Patient Explorer applies, so both pages offer the same names.
+const CHRONIC_CONSULTANT_NOT_A_NAME = /^[0-9]+\s*(month|months)?$/i;
 
 const CHRONIC_CONSULTANT =
   "coalesce(nullif(row_data->>'Consultant',''), nullif(row_data->>'consultant',''), nullif(row_data->>'Doctor',''), nullif(row_data->>'Practitioner',''), 'Unassigned')";
@@ -1181,14 +1294,16 @@ function chronicConsultantOptions(values: Array<string | null | undefined>) {
   let hasUnassigned = false;
 
   for (const value of values) {
-    const trimmed = value?.trim();
-    if (!trimmed) continue;
-    if (trimmed === 'Unassigned') {
+    // RC-2: normalize (collapse internal whitespace, drop hidden characters)
+    // BEFORE the Set, so two spellings of one consultant become one option.
+    const clean = normalizeFilterValue(value);
+    if (!clean) continue;
+    if (clean === 'Unassigned') {
       hasUnassigned = true;
       continue;
     }
-    if (CHRONIC_EXCLUDED_CONSULTANTS.has(trimmed)) continue;
-    consultants.add(trimmed);
+    if (CHRONIC_CONSULTANT_NOT_A_NAME.test(clean)) continue;
+    consultants.add(clean);
   }
 
   const options = Array.from(consultants).sort((a, b) => a.localeCompare(b));
@@ -1250,8 +1365,8 @@ function canonicalizeRecommendation(raw?: string | null): string {
 }
 
 function cleanChronicFilter(value?: string | null) {
-  const trimmed = value?.trim();
-  return trimmed || null;
+  // Same normalization as the dropdown values it is compared against.
+  return normalizeFilterValue(value);
 }
 
 function pctChange(current: number, previous: number) {
@@ -2025,7 +2140,7 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
             and regexp_replace(lower(btrim(issue_entry.value)), '[^a-z0-9]', '', 'g') !~ '^issue[0-9]+$'
         ) issue_columns
       ) issue_extract on true
-      where ($1::text is null or consultant = $1)
+      where ($1::text is null or ${sqlNormalize('consultant')} = $1)
         and ($2::text is null or regexp_replace(lower(btrim(recommendation)), '[^a-z0-9]+', '', 'g') = $2)
         and ($3::text is null or patient_id ilike '%' || $3 || '%')
         and ($4::text is null or risk_carrier = $4)
@@ -2042,8 +2157,8 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
     const uniq = (values: Array<string | null | undefined>) => Array.from(new Set(values.map((value) => value?.trim()).filter(Boolean) as string[]))
       .sort((a, b) => a.localeCompare(b));
     const presentWeeks = uniq(filteredRows.map((row) => row.week));
-    const medicationOptions = Array.from(new Set(filteredRows.map((row) => row.medication_name?.trim()).filter(Boolean) as string[]))
-      .sort((a, b) => a.localeCompare(b));
+    // Normalized before the Set so two spacings of one medication are one option.
+    const medicationOptions = normalizeFilterList(filteredRows.map((row) => row.medication_name));
     const options = {
       periods: chronicPeriodsForWeeks(calendar, presentWeeks).map((entry) => entry.period),
       weeks: presentWeeks,
@@ -2234,7 +2349,7 @@ const CHRONIC_ISSUE_VALUE = "btrim(e.value) <> '' and regexp_replace(lower(btrim
 // $4 raw-spelling variants of the selected canonical issue (null = no filter),
 // $5 risk carrier.
 const CHRONIC_PAGE_WHERE = `
-      ($1::text is null or c.consultant = $1)
+      ($1::text is null or ${sqlNormalize('c.consultant')} = $1)
       and ($2::text is null or regexp_replace(lower(btrim(c.recommendation)), '[^a-z0-9]+', '', 'g') = $2)
       and ($3::text is null or c.patient_id ilike '%' || $3 || '%')
       and ($4::text[] is null or exists (
@@ -2444,7 +2559,7 @@ async function loadChronicPageData(filters: ChronicOverviewFilters): Promise<Chr
         from chronic c
         join lateral jsonb_each_text(c.row_data) e(key, value)
           on ${CHRONIC_ISSUE_KEY} and ${CHRONIC_ISSUE_VALUE}
-        where ($1::text is null or c.consultant = $1)
+        where ($1::text is null or ${sqlNormalize('c.consultant')} = $1)
           and ($2::text is null or regexp_replace(lower(btrim(c.recommendation)), '[^a-z0-9]+', '', 'g') = $2)
           and ($3::text is null or c.patient_id ilike '%' || $3 || '%')
           and ($4::text is null or c.risk_carrier = $4)

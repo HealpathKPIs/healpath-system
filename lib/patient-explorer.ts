@@ -1,6 +1,7 @@
 import { dbQuery, hasDb } from './pg';
 import { PatientMasterRepository } from './patient-master-repository';
-import { getFilterOptions } from './queries';
+import { type CascadeSelection, getCascadingFilterOptions } from './queries';
+import { normalizeFilterList, normalizeFilterValue, sqlNormalize } from './filter-normalize';
 import type { RankRow } from './types';
 
 const CHRONIC_CONSULTANT = "coalesce(nullif(btrim(row_data->>'Consultant Name'), ''), 'Unassigned')";
@@ -102,8 +103,9 @@ const SORTS: Record<string, string> = {
 };
 
 function clean(value?: string | null) {
-  const trimmed = value?.trim();
-  return trimmed || null;
+  // RC-2: every filter value (dropdown or typed) is normalized the same way, so
+  // "Aya  Nada" pasted into a URL resolves to the same doctor as "Aya Nada".
+  return normalizeFilterValue(value);
 }
 
 function pageNumber(value?: string | number | null) {
@@ -306,39 +308,64 @@ function mapPatientRow(row: Record<string, unknown>): PatientExplorerRow {
   };
 }
 
-async function getConsultants() {
+// RC-2 Part 2 — the consultant list is the one list built by MERGING two sources
+// (chronic_pre + chronic_post). The merged result is normalized first and only
+// then deduplicated, because `union` on the raw values would keep
+// "Dr. Aya Ahmed" and "Dr.  Aya Ahmed" as two separate options.
+//
+// It is also the one list polluted by non-names: the source column carries
+// duration markers ("0", "1 Month", "3 Months") that are not consultants. The
+// previous hard-coded exclusion list missed the singular and bare-number forms,
+// so they are matched by pattern instead.
+const CONSULTANT_NOT_A_NAME = "^[0-9]+\\s*(month|months)?$";
+
+async function getConsultants(riskCarrier: string | null = null) {
   if (!hasDb) return [];
-  const rows = await dbQuery<{ consultant: string }>(`
-    select distinct consultant
-    from (
-      select ${CHRONIC_CONSULTANT} as consultant from healpath.chronic_pre
-      union
-      select ${CHRONIC_CONSULTANT} as consultant from healpath.chronic_post
-    ) c
-    where consultant is not null and btrim(consultant) <> ''
-      and consultant not in ('1 Months','2 Month','3 Months','4 Months','5 Months','6 Months')
-    order by consultant
-  `);
+  const consultant = sqlNormalize('src.consultant');
+  const rows = await dbQuery<{ consultant: string }>(
+    `with src as (
+       select ${CHRONIC_CONSULTANT} as consultant, ${PatientMasterRepository.chronicPatientIdExpr('c')} as patient_id
+       from healpath.chronic_pre c
+       union all
+       select ${CHRONIC_CONSULTANT} as consultant, ${PatientMasterRepository.chronicPatientIdExpr('c')} as patient_id
+       from healpath.chronic_post c
+     )
+     select distinct ${consultant} as consultant
+     from src
+     left join healpath.patient_master pm on pm.patient_id = src.patient_id
+     where ${consultant} is not null
+       and ${consultant} !~* '${CONSULTANT_NOT_A_NAME}'
+       and ($1::text is null or ${sqlNormalize('pm.risk_carrier')} = $1)
+     order by 1`,
+    [riskCarrier],
+  );
   return rows.map((row) => row.consultant);
 }
 
-export async function getPatientExplorerOptions(): Promise<PatientExplorerOptions> {
+export async function getPatientExplorerOptions(
+  selection: CascadeSelection = {},
+): Promise<PatientExplorerOptions> {
+  const riskCarrier = normalizeFilterValue(selection.riskCarrier);
   const [filterOptions, consultants] = await Promise.all([
-    getFilterOptions(),
-    getConsultants().catch(() => []),
+    getCascadingFilterOptions(selection),
+    // Consultant is the bottom of the hierarchy. Chronic rows carry no month,
+    // specialty or doctor, so risk carrier is the only level above it that can
+    // narrow the list.
+    getConsultants(riskCarrier).catch(() => []),
   ]);
   return {
     months: filterOptions.months,
     doctors: filterOptions.doctors,
     specialties: filterOptions.specialties,
     riskCarriers: filterOptions.riskCarriers,
-    consultants,
+    consultants: normalizeFilterList(consultants),
   };
 }
 
 export async function getPatientExplorerData(input: PatientExplorerFilters): Promise<PatientExplorerData> {
   const filters = normalizeFilters(input);
-  const options = await getPatientExplorerOptions();
+  // Cascading: the dropdowns are narrowed by what is currently selected.
+  const options = await getPatientExplorerOptions(filters);
   if (!hasDb) {
     return {
       filters,
