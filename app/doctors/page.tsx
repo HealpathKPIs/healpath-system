@@ -7,9 +7,12 @@ import { getKpis, getSpecialties, getTrends, resolveFilters } from '@/lib/querie
 import type { RankRow } from '@/lib/types';
 
 export default async function Doctors({ searchParams }: { searchParams: { month?: string; specialty?: string; doctor?: string; riskCarrier?: string; sel?: string; selv?: string; q?: string } }) {
-  // Honours specialty (dropdown or selection) but stays inert to the doctor filter,
-  // exactly as the doctor dropdown behaves here (Sprint 15); no drug/disease drill-down.
-  const f = resolveFilters(searchParams, { doctor: false });
+  // Honours the doctor filter like every other page. It used to be dropped here
+  // (Sprint 15), which meant the Doctor dropdown showed a doctor as selected and
+  // the URL carried ?doctor=..., while the KPIs below still reported the whole
+  // month — e.g. "Total Visits 5,899" for July with Aya Nada selected, instead of
+  // her 96. No drug/disease drill-down on this page.
+  const f = resolveFilters(searchParams, { doctor: true });
   const [k, { ranking, doctors }, trends] = await Promise.all([
     getKpis(f), getSpecialties(f), getTrends(f.specialty, f.doctor, f.drug, f.disease, f.riskCarrier),
   ]);
