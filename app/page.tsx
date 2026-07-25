@@ -1,4 +1,5 @@
 import BarRank from '@/components/BarRank';
+import DataSourceStatus, { DataSourceBadge } from '@/components/DataSourceStatus';
 import FilterBar from '@/components/FilterBar';
 import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
@@ -252,10 +253,12 @@ export default async function Overview({ searchParams }: { searchParams: { month
   return (
     <section className="overview-report">
       <ExecutiveScenarioLayer k={k} doctor={f.doctor} peerKpis={peerKpis} drugs={drugs} diagnostics={latestDiagnostics} trends={trends} />
+      <DataSourceStatus />
       <div className="overview-header">
         <div>
           <p className="overview-eyebrow">HealPath BI Report</p>
           <h1 className="overview-title">Overview</h1>
+          <DataSourceBadge />
           <p className="overview-subtitle">Executive utilization summary for the 2026 reporting window</p>
         </div>
         <Suspense fallback={<div className="filters"><div className="skeleton-line" style={{ width: 150, height: 28 }} /><div className="skeleton-line" style={{ width: 150, height: 28 }} /></div>}>

@@ -1,4 +1,5 @@
 import BarRank from '@/components/BarRank';
+import DataSourceStatus, { DataSourceBadge } from '@/components/DataSourceStatus';
 import KpiCard from '@/components/KpiCard';
 import PatientExplorerControls from './PatientExplorerControls';
 import { getPatientExplorerData, type PatientExplorerFilters, type PatientExplorerRow } from '@/lib/patient-explorer';
@@ -197,9 +198,11 @@ export default async function PatientExplorerPage({ searchParams }: { searchPara
 
   return (
     <section style={{ display: 'grid', gap: 22, width: 'min(100%, 1560px)', margin: '0 auto' }}>
+      <DataSourceStatus />
       <div className="pagehead">
         <div>
           <h1 className="pagetitle">Patient Explorer</h1>
+          <DataSourceBadge />
           <p className="muted" style={{ margin: '8px 0 0' }}>Operational patient discovery across Acute, Chronic, and Patient Master.</p>
         </div>
       </div>

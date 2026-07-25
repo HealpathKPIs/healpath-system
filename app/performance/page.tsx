@@ -1,4 +1,5 @@
 import FilterBar from '@/components/FilterBar';
+import DataSourceStatus, { DataSourceBadge } from '@/components/DataSourceStatus';
 import { ExecutiveScenarioLayer } from '@/components/ExecutiveExperience';
 import { getDiagnostics, getDrugs, getKpis, getPerformanceEntityMetrics, getTrends, getCascadingFilterOptions, resolveFilters } from '@/lib/queries';
 import PerformanceMatrixClient, { type MatrixCell, type MatrixRow, type MatrixTab } from './PerformanceMatrixClient';
@@ -123,9 +124,11 @@ export default async function PerformanceMatrix({ searchParams }: {
   return (
     <section style={{ display: 'grid', gap: 22 }}>
       <ExecutiveScenarioLayer k={k} doctor={f.doctor} peerKpis={peerKpis} drugs={drugs} diagnostics={diagnostics} trends={trends} />
+      <DataSourceStatus />
       <div className="pagehead">
         <div>
           <h1 className="pagetitle">Performance Matrix</h1>
+          <DataSourceBadge />
           <p className="muted" style={{ margin: '8px 0 0' }}>Executive comparison across doctors, specialties, medications, laboratories, and scans.</p>
         </div>
         <Suspense fallback={<div className="filters"><div className="skeleton-line" style={{ width: 150, height: 28 }} /></div>}>

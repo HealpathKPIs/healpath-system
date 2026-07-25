@@ -1,4 +1,5 @@
 import AnimatedNumber from '@/components/AnimatedNumber';
+import DataSourceStatus, { DataSourceBadge } from '@/components/DataSourceStatus';
 import BarRank from '@/components/BarRank';
 import ExecutiveChartDrill from '../ExecutiveChartDrill';
 import {
@@ -445,9 +446,11 @@ export default async function ChronicAnalyticsPage({ searchParams }: {
 
   return (
     <section style={{ display: 'grid', gap: 22 }}>
+      <DataSourceStatus />
       <div className="pagehead">
         <div>
           <h1 className="pagetitle">Chronic Intelligence Center</h1>
+          <DataSourceBadge />
           <p className="muted" style={{ margin: '8px 0 0' }}>
             Executive analytics for issue and recommendation intelligence{periodSuffix}.
           </p>

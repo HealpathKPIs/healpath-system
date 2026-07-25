@@ -1,4 +1,5 @@
 import AnimatedNumber from '@/components/AnimatedNumber';
+import DataSourceStatus, { DataSourceBadge } from '@/components/DataSourceStatus';
 import { getPatient360, getRiskCarrierOptions, type Patient360Summary } from '@/lib/queries';
 import Patient360Client from './Patient360Client';
 
@@ -92,9 +93,11 @@ export default async function Patient360Page({ searchParams }: {
 
   return (
     <section style={{ display: 'grid', gap: 22, width: 'min(100%, 1560px)', margin: '0 auto' }}>
+      <DataSourceStatus />
       <div className="pagehead">
         <div>
           <h1 className="pagetitle">Patient 360</h1>
+          <DataSourceBadge />
           <p className="muted" style={{ margin: '8px 0 0' }}>Unified acute and chronic read-only patient view.</p>
         </div>
       </div>

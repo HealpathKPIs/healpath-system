@@ -13,6 +13,7 @@
 import { Pool } from 'pg';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { recordLiveQuery, recordQueryFailure } from './data-source';
 
 const url = process.env.DATABASE_URL;
 
@@ -41,8 +42,42 @@ const pool = g.__hpPool ?? (g.__hpPool = makePool());
 
 export const hasDb = Boolean(pool);
 
+/** First meaningful line of a statement, for logs (never the bind parameters). */
+function queryContext(text: string): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact;
+}
+
 export async function dbQuery<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T[]> {
   if (!pool) throw new Error('DATABASE_URL not configured');
-  const res = await pool.query(text, params);
-  return res.rows as T[];
+  // RC-3: every live query reports its outcome here — the one place all 18
+  // snapshot-fallback sites in the query layer funnel through. The error is
+  // logged with its context and then rethrown, so the existing fallbacks still
+  // work but can no longer happen silently.
+  try {
+    const res = await pool.query(text, params);
+    recordLiveQuery();
+    return res.rows as T[];
+  } catch (error) {
+    recordQueryFailure(queryContext(text), error);
+    throw error;
+  }
+}
+
+/**
+ * Is the database reachable right now? Used by /api/health so the dashboard can
+ * tell live from cached without waiting for a page's queries to fail.
+ */
+export async function dbHealthCheck(timeoutMs = 4000): Promise<{ reachable: boolean; latencyMs: number; error?: string }> {
+  const started = Date.now();
+  if (!pool) return { reachable: false, latencyMs: 0, error: 'DATABASE_URL not configured' };
+  try {
+    await Promise.race([
+      pool.query('select 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`health check timed out after ${timeoutMs}ms`)), timeoutMs)),
+    ]);
+    return { reachable: true, latencyMs: Date.now() - started };
+  } catch (error) {
+    return { reachable: false, latencyMs: Date.now() - started, error: (error as Error).message };
+  }
 }

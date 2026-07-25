@@ -1,4 +1,5 @@
 import AnimatedNumber from '@/components/AnimatedNumber';
+import DataSourceStatus, { DataSourceBadge } from '@/components/DataSourceStatus';
 import ChronicShortcuts from './ChronicShortcuts';
 import ExecutiveChartDrill from './ExecutiveChartDrill';
 import ExportCenter from './ExportCenter';
@@ -492,9 +493,11 @@ export default function ChronicCarePage({ searchParams }: {
   return (
     <section className="chronic-dashboard">
       <ChronicShortcuts />
+      <DataSourceStatus />
       <div className="pagehead">
         <div>
           <h1 className="pagetitle">Chronic Care</h1>
+          <DataSourceBadge />
           <Suspense fallback={<p className="muted" style={{ margin: '8px 0 0' }}>PRE vs POST clinical outcome dashboard.</p>}>
             <HeaderSubtitle searchParams={searchParams} />
           </Suspense>
