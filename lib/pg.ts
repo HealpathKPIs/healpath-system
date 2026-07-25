@@ -27,11 +27,17 @@ function makePool(): Pool | null {
   } catch {
     ca = undefined;
   }
+  // On Vercel every concurrent request is its own instance with its own pool, so
+  // a long idle retention makes each one hoard pooler connections it is not
+  // using; released quickly, they go back to the shared budget. A long-lived
+  // local server benefits from the opposite.
+  const serverless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
   return new Pool({
     connectionString: conn.toString(),
     ssl: ca ? { ca } : undefined,
     max: 4,
-    idleTimeoutMillis: 30_000,
+    idleTimeoutMillis: serverless ? 5_000 : 30_000,
     connectionTimeoutMillis: 10_000,
   });
 }
@@ -48,19 +54,54 @@ function queryContext(text: string): string {
   return compact.length > 120 ? `${compact.slice(0, 120)}…` : compact;
 }
 
+/**
+ * Connection-level failures worth one retry: the connection was lost, refused,
+ * timed out, or the pooler was momentarily out of slots. A SQL error (bad syntax,
+ * missing column, constraint violation) is deterministic and never retried.
+ */
+function isTransientConnectionError(error: unknown): boolean {
+  const err = error as { code?: string; message?: string };
+  const code = err?.code ?? '';
+  if (['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'ECONNREFUSED', '57P01', '53300', '08006', '08003'].includes(code)) {
+    return true;
+  }
+  const message = (err?.message ?? '').toLowerCase();
+  return (
+    message.includes('connection terminated') ||
+    message.includes('connection ended') ||
+    message.includes('too many clients') ||
+    message.includes('timeout exceeded when trying to connect') ||
+    message.includes('server closed the connection')
+  );
+}
+
 export async function dbQuery<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T[]> {
   if (!pool) throw new Error('DATABASE_URL not configured');
-  // RC-3: every live query reports its outcome here — the one place all 18
+  // Every live query reports its outcome here — the one place all the
   // snapshot-fallback sites in the query layer funnel through. The error is
   // logged with its context and then rethrown, so the existing fallbacks still
   // work but can no longer happen silently.
-  try {
-    const res = await pool.query(text, params);
-    recordLiveQuery();
-    return res.rows as T[];
-  } catch (error) {
-    recordQueryFailure(queryContext(text), error);
-    throw error;
+  //
+  // One retry first: a page fires dozens of queries at once and a single
+  // momentarily-unavailable connection would otherwise turn that page into
+  // "cached snapshot". Only connection-level failures are retried.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await pool.query(text, params);
+      recordLiveQuery();
+      return res.rows as T[];
+    } catch (error) {
+      if (attempt === 0 && isTransientConnectionError(error)) {
+        console.warn(
+          '[data-source] transient query failure, retrying once',
+          JSON.stringify({ context: queryContext(text), reason: (error as Error).message }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        continue;
+      }
+      recordQueryFailure(queryContext(text), error);
+      throw error;
+    }
   }
 }
 
