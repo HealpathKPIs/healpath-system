@@ -43,16 +43,24 @@ interface RequestDataSource {
   failures: QueryFailure[];
 }
 
-// React's cache() scopes this to a single request/render pass. Outside a render
-// (route handlers, scripts) it can throw, so callers get a throwaway store —
-// logging still happens, only the per-request roll-up is skipped.
-const requestStore = cache((): RequestDataSource => ({ liveQueries: 0, failures: [] }));
+// React's cache() scopes this to a single request/render pass. It only exists
+// inside the RSC runtime: plain Node (the CLI importer, scripts, tests) imports
+// this module transitively via lib/pg.ts, where `cache` is undefined. So it is
+// resolved lazily and defensively — outside a render each caller just gets a
+// throwaway store, and logging still happens; only the per-request roll-up is
+// skipped. Building it at module scope instead crashes the importer on load.
+const fresh = (): RequestDataSource => ({ liveQueries: 0, failures: [] });
+
+let requestStore: (() => RequestDataSource) | null = null;
 
 function store(): RequestDataSource {
   try {
+    if (!requestStore) {
+      requestStore = typeof cache === 'function' ? cache(fresh) : fresh;
+    }
     return requestStore();
   } catch {
-    return { liveQueries: 0, failures: [] };
+    return fresh();
   }
 }
 
