@@ -18,7 +18,23 @@ configured the same queries run live against Postgres.
 | `/doctors` | Doctor & Specialty | Visits by specialty, sortable doctor matrix |
 | `/diagnostics` | Labs & Scans | Labs/visit + Scans/visit + Δ, top lab tests, top scans |
 | `/trends` | Trends | Multi-line avg per visit by month, dynamic Δ strip |
-| `/login` | Login | Single shared password login |
+| `/login` | Login | Supabase email/password authentication |
+| `/users` | Users | Admin-only Viewer account management |
+| `/admin/import` | Data Import | Admin-only monthly workbook import |
+| `/admin/patient-master` | Patient Master | Admin-only patient master import |
+| `/chronic/import` | Chronic Import | Admin-only chronic workbook import |
+
+## Authentication and roles
+
+HealPath uses Supabase Auth with two roles:
+
+- **Administrator** — full dashboard, export, import, and user-management access.
+- **Viewer** — access to every dashboard, Settings, filters, search, and exports;
+  all import and user-management pages and APIs are denied.
+
+Navigation visibility, middleware authorization, and server/API checks enforce
+the same policy. Disabled Viewer accounts cannot sign in, and authenticated
+users receive a dedicated `403` screen for restricted URLs.
 
 ## Metric parity
 
@@ -60,12 +76,17 @@ npm run dev          # http://localhost:3000, runs on the bundled snapshot
 ## Deploy
 
 1. Push the repo to GitHub and import it into Vercel.
-2. Set the three env vars in Vercel project settings (see `.env.example`):
+2. Set the env vars in Vercel project settings (see `.env.example`):
    - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `SUPABASE_SERVICE_ROLE_KEY` (server only)
-   - `DASHBOARD_PASSWORD` (server only, the shared login secret)
+   - `DATABASE_URL` (server only)
 3. Run `supabase/schema.sql` once against the Supabase project.
-4. Run the monthly import (below) to load the extract.
+4. Run `supabase/migrations/20260825000100_add_healpath_rbac.sql` once.
+5. Create `ahmedramadan@healpath.care` in Supabase Auth; the migration trigger
+   makes it the active primary Administrator. Every other Auth user defaults to
+   an inactive Viewer and should normally be created from `/users`.
+6. Run the monthly import (below) to load the extract.
 
 ## Monthly refresh runbook
 
@@ -90,6 +111,6 @@ app/            pages + api/ route handlers
 components/     KpiCard, BarRank, TrendLine, Donut, DataTable, FilterBar, TrendArrow
 lib/            supabase client, queries (the metric library), types
 scripts/        import.ts (CSV/XLSX -> Supabase loader + reconciliation)
-supabase/       schema.sql (DDL)
+supabase/       data schema + RBAC migration
 data/           snapshot2026.json (bundled fallback data)
 ```

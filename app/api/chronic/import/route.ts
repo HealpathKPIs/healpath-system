@@ -21,6 +21,7 @@ import {
   normalizeChronicRows,
 } from '@/lib/chronic-normalizer';
 import { invalidateDashboardData } from '@/lib/data-refresh';
+import { requireAdminApi } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -303,6 +304,9 @@ async function insertRows(
 }
 
 export async function POST(req: NextRequest) {
+  const authError = await requireAdminApi();
+  if (authError) return authError;
+
   const started = Date.now();
   // Sprint 33.5H2 hang trace — logs only, no logic changes. The last line
   // printed before silence identifies where a Pending request is stuck.
@@ -471,6 +475,9 @@ export async function POST(req: NextRequest) {
 // reflects new weeks with no code change. Falls back to the seed if the DB is
 // unavailable.
 export async function GET() {
+  const authError = await requireAdminApi();
+  if (authError) return authError;
+
   try {
     const client = await getPool().connect();
     try {

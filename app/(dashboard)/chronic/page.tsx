@@ -13,6 +13,7 @@ import {
 } from '@/lib/queries';
 import Link from 'next/link';
 import { Suspense } from 'react';
+import { getCurrentProfile } from '@/lib/auth-server';
 
 const selectStyle: React.CSSProperties = {
   height: 38,
@@ -487,9 +488,11 @@ async function OperationalKpiSection({ searchParams }: {
   );
 }
 
-export default function ChronicCarePage({ searchParams }: {
+export default async function ChronicCarePage({ searchParams }: {
   searchParams: { period?: string; consultant?: string; riskCarrier?: string; recommendation?: string; issue?: string; patient?: string };
 }) {
+  const profile = await getCurrentProfile();
+
   return (
     <section className="chronic-dashboard">
       <ChronicShortcuts />
@@ -541,25 +544,27 @@ export default function ChronicCarePage({ searchParams }: {
           >
             Patient
           </Link>
-          <Link
-            href="/chronic/import"
-            aria-label="Open Chronic Import Center"
-            style={{
-              height: 38,
-              display: 'inline-flex',
-              alignItems: 'center',
-              border: '1px solid var(--border)',
-              borderRadius: 10,
-              padding: '0 14px',
-              color: 'var(--text)',
-              background: 'var(--surface)',
-              textDecoration: 'none',
-              fontWeight: 800,
-              boxShadow: 'var(--shadow-xs)',
-            }}
-          >
-            Import
-          </Link>
+          {profile?.role === 'admin' ? (
+            <Link
+              href="/chronic/import"
+              aria-label="Open Chronic Import Center"
+              style={{
+                height: 38,
+                display: 'inline-flex',
+                alignItems: 'center',
+                border: '1px solid var(--border)',
+                borderRadius: 10,
+                padding: '0 14px',
+                color: 'var(--text)',
+                background: 'var(--surface)',
+                textDecoration: 'none',
+                fontWeight: 800,
+                boxShadow: 'var(--shadow-xs)',
+              }}
+            >
+              Import
+            </Link>
+          ) : null}
         </div>
       </div>
 

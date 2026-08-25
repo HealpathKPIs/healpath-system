@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 // @ts-ignore — plain ESM module shared verbatim with the CLI importer (single source of truth)
 import { parseWorkbook, loadDatabase } from '@/lib/import-core.mjs';
 import { invalidateDashboardData } from '@/lib/data-refresh';
+import { requireAdminApi } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,6 +10,9 @@ export const dynamic = 'force-dynamic';
 // Admin → Data Import endpoint. mode=preview parses/cleans only (NO database
 // write); mode=import runs the existing loader and streams NDJSON progress.
 export async function POST(req: NextRequest) {
+  const authError = await requireAdminApi();
+  if (authError) return authError;
+
   const form = await req.formData();
   const file = form.get('file');
   const mode = String(form.get('mode') ?? 'preview');

@@ -134,10 +134,10 @@ export default function CommandPalette() {
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder="Search doctors, medications, labs, diagnoses…"
-          role="combobox" aria-expanded aria-autocomplete="list"
+          role="combobox" aria-expanded={true} aria-autocomplete="list" aria-controls="command-palette-results"
           style={{ width: '100%', border: 0, borderBottom: '1px solid var(--border)', outline: 'none', padding: '18px 20px', fontSize: 16, background: 'transparent', color: 'var(--text)' }}
         />
-        <div role="listbox" style={{ maxHeight: '52vh', overflowY: 'auto', padding: 8 }}>
+        <div id="command-palette-results" role="listbox" style={{ maxHeight: '52vh', overflowY: 'auto', padding: 8 }}>
           {items.length === 0 ? (
             <div style={{ padding: '18px 14px', color: 'var(--text-soft)', fontSize: 14 }}>
               {q.trim().length < 2 ? 'Type at least 2 characters to search…' : 'No matches'}

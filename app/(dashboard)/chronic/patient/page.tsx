@@ -81,7 +81,7 @@ function MatchList({ matches, query }: { matches: string[]; query: string }) {
     return (
       <section className="card">
         <p className="section-title">Patient Explorer</p>
-        <div className="chart-empty">No chronic patient matched "{query}".</div>
+        <div className="chart-empty">No chronic patient matched “{query}”.</div>
       </section>
     );
   }

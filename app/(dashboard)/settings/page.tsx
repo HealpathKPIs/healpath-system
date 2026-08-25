@@ -1,10 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
-import pkg from '../../package.json';
+import pkg from '../../../package.json';
 
-// Settings (Sprint 27). Preferences persist in this browser (localStorage
-// 'hp-settings') — the app has no user accounts, so there is no server-side
-// profile to write to. "Show Executive Feed" is read by the Overview feed.
+// Settings preferences persist on this browser in localStorage. Authentication
+// and account status are managed separately through Supabase Auth.
 
 interface Settings {
   appearance: 'light' | 'dark' | 'system';
@@ -63,13 +62,13 @@ export default function SettingsPage() {
         <div className="card">
           <p className="section-title">Account</p>
           <div style={{ ...row, borderBottom: 0 }}>
-            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Password</span>
-            <button type="button" disabled title="Available once user accounts exist"
+            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Authentication</span>
+            <button type="button" disabled title="Managed by the HealPath Administrator"
               style={{ border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)', color: 'var(--text-soft)', padding: '7px 12px', font: 'inherit', fontSize: 12.5, fontWeight: 600, cursor: 'not-allowed' }}>
-              Change Password
+              Secure account
             </button>
           </div>
-          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>Placeholder — the dashboard uses shared access; there are no per-user accounts yet.</p>
+          <p className="muted" style={{ margin: '4px 0 0', fontSize: 12 }}>Passwords and account status are managed by the HealPath Administrator from Users.</p>
         </div>
 
         <div className="card">

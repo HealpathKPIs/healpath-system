@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 
 type Hit = { label: string; hint: string };
@@ -25,6 +25,7 @@ function highlight(text: string, term: string): ReactNode {
 // autocomplete with highlighted matches + keyboard navigation. Selecting a
 // result sets ?q, which the server page consumes to filter its data.
 export default function SearchBox({ scope, placeholder }: { scope: string; placeholder?: string }) {
+  const listboxId = useId();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -111,6 +112,7 @@ export default function SearchBox({ scope, placeholder }: { scope: string; place
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
+        aria-controls={listboxId}
         placeholder={placeholder ?? 'Search…'}
         value={term}
         onChange={(e) => setTerm(e.target.value)}
@@ -119,6 +121,7 @@ export default function SearchBox({ scope, placeholder }: { scope: string; place
       />
       {open && (
         <ul
+          id={listboxId}
           role="listbox"
           style={{
             position: 'absolute', zIndex: 20, top: 'calc(100% + 4px)', left: 0, right: 0,

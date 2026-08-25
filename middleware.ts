@@ -1,43 +1,105 @@
-// Server-side auth gate. Every dashboard page and API route requires the
-// signed hp_auth session cookie; unauthenticated page requests are redirected
-// to /login (with a `next` return path) and API requests get 401. The gate is
-// active whenever DASHBOARD_PASSWORD is configured (set it in Vercel env);
-// without it the app stays open (local development convenience).
+import { createServerClient } from '@supabase/ssr';
+import { type NextRequest, NextResponse } from 'next/server';
 
-import { NextRequest, NextResponse } from 'next/server';
-import { AUTH_COOKIE, authToken } from './lib/auth';
+import { canAccessPath, isAppRole } from '@/lib/rbac';
 
-// Memoize the expected token per secret (middleware runs on every request).
-let cachedSecret: string | null = null;
-let cachedToken: string | null = null;
+const PUBLIC_PATHS = new Set(['/login']);
 
-async function expectedToken(secret: string): Promise<string> {
-  if (cachedSecret !== secret || cachedToken === null) {
-    cachedToken = await authToken(secret);
-    cachedSecret = secret;
-  }
-  return cachedToken;
+function applyCookies(
+  response: NextResponse,
+  cookiesToSet: Array<{
+    name: string;
+    value: string;
+    options: Parameters<NextResponse['cookies']['set']>[2];
+  }>,
+) {
+  cookiesToSet.forEach(({ name, options, value }) => {
+    response.cookies.set(name, value, options);
+  });
+  return response;
+}
+
+function accessDenied(request: NextRequest, reason?: string) {
+  const url = request.nextUrl.clone();
+  url.pathname = '/access-denied';
+  url.search = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+  return NextResponse.rewrite(url, { status: 403 });
+}
+
+function apiError(message: string, status: 401 | 403) {
+  return NextResponse.json({ error: message }, { status });
 }
 
 export async function middleware(request: NextRequest) {
-  const secret = process.env.DASHBOARD_PASSWORD;
-  if (!secret) return NextResponse.next();
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const pathname = request.nextUrl.pathname;
+  const isApi = pathname.startsWith('/api/');
+  const isPublic = PUBLIC_PATHS.has(pathname);
+  const cookiesToSet: Array<{
+    name: string;
+    value: string;
+    options: Parameters<NextResponse['cookies']['set']>[2];
+  }> = [];
 
-  const cookie = request.cookies.get(AUTH_COOKIE)?.value;
-  if (cookie && cookie === await expectedToken(secret)) return NextResponse.next();
-
-  const { pathname, search } = request.nextUrl;
-  if (pathname.startsWith('/api/')) {
-    return NextResponse.json({ error: 'Authentication required.' }, { status: 401 });
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return isApi
+      ? apiError('Authentication is not configured.', 403)
+      : accessDenied(request, 'configuration');
   }
 
-  const login = request.nextUrl.clone();
-  login.pathname = '/login';
-  login.search = pathname && pathname !== '/' ? `?next=${encodeURIComponent(pathname + search)}` : '';
-  return NextResponse.redirect(login);
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll: () => request.cookies.getAll(),
+      setAll: (updatedCookies) => {
+        cookiesToSet.push(...updatedCookies);
+      },
+    },
+  });
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    if (isPublic) return applyCookies(NextResponse.next(), cookiesToSet);
+    if (isApi) return applyCookies(apiError('Authentication required.', 401), cookiesToSet);
+
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = '/login';
+    loginUrl.search = pathname === '/' ? '' : `?next=${encodeURIComponent(pathname + request.nextUrl.search)}`;
+    return applyCookies(NextResponse.redirect(loginUrl), cookiesToSet);
+  }
+
+  if (pathname === '/access-denied') {
+    return applyCookies(NextResponse.next(), cookiesToSet);
+  }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('active, role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (!profile || !profile.active || !isAppRole(profile.role)) {
+    if (isApi) return applyCookies(apiError('Account access is disabled.', 403), cookiesToSet);
+    return applyCookies(accessDenied(request, 'disabled'), cookiesToSet);
+  }
+
+  if (isPublic) {
+    const homeUrl = request.nextUrl.clone();
+    homeUrl.pathname = '/';
+    homeUrl.search = '';
+    return applyCookies(NextResponse.redirect(homeUrl), cookiesToSet);
+  }
+
+  if (!canAccessPath({ active: profile.active, role: profile.role }, pathname)) {
+    if (isApi) return applyCookies(apiError('Administrator access is required.', 403), cookiesToSet);
+    return applyCookies(accessDenied(request), cookiesToSet);
+  }
+
+  return applyCookies(NextResponse.next(), cookiesToSet);
 }
 
 export const config = {
-  // Everything except the login page, the login API, and Next.js static assets.
-  matcher: ['/((?!login|api/login|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)'],
 };

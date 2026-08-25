@@ -3,6 +3,9 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Suspense, type ReactNode } from 'react';
 
+import { logout } from '@/app/auth-actions';
+import { isAdminOnlyPath, type UserProfile } from '@/lib/rbac';
+
 const ICONS: Record<string, ReactNode> = {
   '/': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /></svg>
@@ -43,6 +46,9 @@ const ICONS: Record<string, ReactNode> = {
   '/settings': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" /></svg>
   ),
+  '/users': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M22 11h-6" /></svg>
+  ),
 };
 
 const LINKS = [
@@ -59,12 +65,15 @@ const LINKS = [
   { href: '/admin/import', label: 'Data Import' },
   { href: '/admin/patient-master', label: 'Patient Master' },
   { href: '/settings', label: 'Settings' },
+  { href: '/users', label: 'Users' },
 ];
 
-function NavLinks({ path, query = '' }: { path: string; query?: string }) {
+function NavLinks({ path, query = '', role }: { path: string; query?: string; role: UserProfile['role'] }) {
+  const visibleLinks = role === 'admin' ? LINKS : LINKS.filter((link) => !isAdminOnlyPath(link.href));
+
   return (
     <>
-      {LINKS.map((l) => (
+      {visibleLinks.map((l) => (
         <Link key={l.href} href={`${l.href}${query ? `?${query}` : ''}`} className={`navlink ${path === l.href ? 'active' : ''}`} aria-current={path === l.href ? 'page' : undefined}>
           <span className="nav-icon">{ICONS[l.href]}</span>
           <span className="nav-label">{l.label}</span>
@@ -74,7 +83,7 @@ function NavLinks({ path, query = '' }: { path: string; query?: string }) {
   );
 }
 
-function PreservedNavLinks({ path }: { path: string }) {
+function PreservedNavLinks({ path, role }: { path: string; role: UserProfile['role'] }) {
   const params = useSearchParams();
   const preserve = new URLSearchParams();
   // Carry the executive filter context across dashboards so nothing is lost on
@@ -84,10 +93,19 @@ function PreservedNavLinks({ path }: { path: string }) {
     if (value) preserve.set(key, value);
   });
   const query = preserve.toString();
-  return <NavLinks path={path} query={query} />;
+  return <NavLinks path={path} query={query} role={role} />;
 }
 
-export default function Nav() {
+function initials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || 'HP';
+}
+
+export default function Nav({ profile }: { profile: UserProfile }) {
   const path = usePathname();
   return (
     <nav className="nav">
@@ -104,13 +122,21 @@ export default function Nav() {
       </button>
       <div className="nav-section">Analytics</div>
       <div className="nav-scroll">
-        <Suspense fallback={<NavLinks path={path} />}>
-          <PreservedNavLinks path={path} />
+        <Suspense fallback={<NavLinks path={path} role={profile.role} />}>
+          <PreservedNavLinks path={path} role={profile.role} />
         </Suspense>
       </div>
-      <div className="nav-foot">
-        <span className="nav-foot-dot" />
-        <span className="nav-foot-text"><b>2026 Reporting</b><small>Live snapshot</small></span>
+      <div className="nav-account">
+        <span className="nav-avatar" aria-hidden="true">{initials(profile.fullName)}</span>
+        <span className="nav-account-copy">
+          <b>{profile.fullName}</b>
+          <small>{profile.role === 'admin' ? 'Administrator' : 'Viewer'}</small>
+        </span>
+        <form action={logout}>
+          <button type="submit" className="nav-signout" aria-label="Sign out" title="Sign out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 17l5-5-5-5M15 12H3" /><path d="M15 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" /></svg>
+          </button>
+        </form>
       </div>
     </nav>
   );

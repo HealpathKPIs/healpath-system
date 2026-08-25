@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AUTH_COOKIE, authToken } from '@/lib/auth';
+import { requireAdminApi } from '@/lib/api-auth';
 import { PatientMasterService } from '@/lib/patient-master-service';
 import { invalidateDashboardData } from '@/lib/data-refresh';
 
@@ -12,16 +12,8 @@ function friendlyDatabaseError(error: unknown) {
   return 'Patient Master import could not be completed. Please try again or contact an administrator.';
 }
 
-async function requireAuth(req: NextRequest) {
-  const secret = process.env.DASHBOARD_PASSWORD;
-  if (!secret) return null;
-  const cookie = req.cookies.get(AUTH_COOKIE)?.value;
-  if (cookie && cookie === await authToken(secret)) return null;
-  return NextResponse.json({ error: 'Authentication required.' }, { status: 401 });
-}
-
-export async function GET(req: NextRequest) {
-  const auth = await requireAuth(req);
+export async function GET() {
+  const auth = await requireAdminApi();
   if (auth) return auth;
 
   try {
@@ -33,7 +25,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth(req);
+  const auth = await requireAdminApi();
   if (auth) return auth;
 
   const form = await req.formData();

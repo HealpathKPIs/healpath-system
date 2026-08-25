@@ -10,7 +10,8 @@
     "import": "tsx scripts/import.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.110.5",
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.2",
     "next": "14.2.5",
@@ -26,6 +27,8 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.7",
     "dotenv": "^17.4.2",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.5",
     "tsx": "^4.16.2",
     "typescript": "^5.5.3"
   }
