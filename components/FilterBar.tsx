@@ -2,6 +2,7 @@
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useDashboard } from '@/lib/dashboard-context';
+import { filterValuesEqual } from '@/lib/filter-normalize';
 import CompareCenter from './CompareCenter';
 
 const MONTH_LABEL: Record<string, string> = {
@@ -15,6 +16,15 @@ function monthLabel(value: string) {
   if (!match) return value;
   const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
   return new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
+function canonicalOption(options: string[], value: string): string {
+  if (!value) return '';
+  return options.find((option) => filterValuesEqual(option, value)) ?? value;
+}
+
+function hasOption(options: string[], value: string | null): boolean {
+  return !value || options.some((option) => filterValuesEqual(option, value));
 }
 
 export default function FilterBar({
@@ -39,7 +49,9 @@ export default function FilterBar({
   const pathname = usePathname();
   const params = useSearchParams();
   const { selection, setSelection } = useDashboard();
-  const doctor = params.get('doctor') ?? '';
+  const specialty = canonicalOption(specialties, params.get('specialty') ?? '');
+  const doctor = canonicalOption(doctors, params.get('doctor') ?? '');
+  const riskCarrier = canonicalOption(riskCarriers, params.get('riskCarrier') ?? '');
   const [compareOpen, setCompareOpen] = useState(false);
 
   // Selections survive an import whenever the value still exists. When an import
@@ -50,9 +62,9 @@ export default function FilterBar({
   useEffect(() => {
     const stale: string[] = [];
     if (monthsLive && months.length && params.get('month') && !months.includes(params.get('month')!)) stale.push('month');
-    if (specialties.length && params.get('specialty') && !specialties.includes(params.get('specialty')!)) stale.push('specialty');
-    if (doctors.length && params.get('doctor') && !doctors.includes(params.get('doctor')!)) stale.push('doctor');
-    if (riskCarriers.length && params.get('riskCarrier') && !riskCarriers.includes(params.get('riskCarrier')!)) stale.push('riskCarrier');
+    if (specialties.length && !hasOption(specialties, params.get('specialty'))) stale.push('specialty');
+    if (doctors.length && !hasOption(doctors, params.get('doctor'))) stale.push('doctor');
+    if (riskCarriers.length && !hasOption(riskCarriers, params.get('riskCarrier'))) stale.push('riskCarrier');
     if (!stale.length) return;
 
     const next = new URLSearchParams(params.toString());
@@ -96,7 +108,7 @@ export default function FilterBar({
         <option value="">All months</option>
         {months.map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
       </select>
-      <select aria-label="Specialty" value={params.get('specialty') ?? ''} onChange={(e) => set('specialty', e.target.value)}>
+      <select aria-label="Specialty" value={specialty} onChange={(e) => set('specialty', e.target.value)}>
         <option value="">All specialties</option>
         {specialties.map((s) => <option key={s} value={s}>{s}</option>)}
       </select>
@@ -104,7 +116,7 @@ export default function FilterBar({
         <option value="">All doctors</option>
         {doctors.map((d) => <option key={d} value={d}>{d}</option>)}
       </select>
-      <select aria-label="Risk Carrier" value={params.get('riskCarrier') ?? ''} onChange={(e) => set('riskCarrier', e.target.value)}>
+      <select aria-label="Risk Carrier" value={riskCarrier} onChange={(e) => set('riskCarrier', e.target.value)}>
         <option value="">All</option>
         {riskCarriers.map((carrier) => <option key={carrier} value={carrier}>{carrier}</option>)}
       </select>

@@ -1,7 +1,7 @@
 import { dbQuery, hasDb } from './pg';
 import { PatientMasterRepository } from './patient-master-repository';
 import { type CascadeSelection, getCascadingFilterOptions } from './queries';
-import { normalizeFilterList, normalizeFilterValue, sqlNormalize } from './filter-normalize';
+import { normalizeFilterList, normalizeFilterValue, sqlNormalize, sqlNormalizeKey } from './filter-normalize';
 import type { RankRow } from './types';
 
 const CHRONIC_CONSULTANT = "coalesce(nullif(btrim(row_data->>'Consultant Name'), ''), 'Unassigned')";
@@ -169,9 +169,9 @@ function explorerCte() {
       ${acuteJoin}
       where v.month_year like '2026-%'
         and ($1::text is null or v.month_year = $1)
-        and ($2::text is null or v.doctor_specialty = $2)
-        and ($3::text is null or v.practitioner_name = $3)
-        and ($4::text is null or pm.risk_carrier = $4)
+        and ($2::text is null or ${sqlNormalizeKey('v.doctor_specialty')} = lower($2))
+        and ($3::text is null or ${sqlNormalizeKey('v.practitioner_name')} = lower($3))
+        and ($4::text is null or ${sqlNormalizeKey('pm.risk_carrier')} = lower($4))
         and ($6::text is null or exists (
           select 1 from healpath.diagnosis_fact dg
           where dg.visit_id = v.visit_id
@@ -219,8 +219,8 @@ function explorerCte() {
         ${chronicPostJoin}
       ) c
       where ($1::text is null or (c.year is not null and c.month_order is not null and to_char(make_date(c.year, c.month_order, 1), 'YYYY-MM') = $1))
-        and ($4::text is null or c.risk_carrier = $4)
-        and ($5::text is null or c.consultant = $5)
+        and ($4::text is null or ${sqlNormalizeKey('c.risk_carrier')} = lower($4))
+        and ($5::text is null or ${sqlNormalizeKey('c.consultant')} = lower($5))
         and ($6::text is null or ${CHRONIC_DISEASE_TEXT})
         and ($7::text is null or c.medication_name ilike '%' || $7 || '%')
         and ($8::text is null or ${CHRONIC_ACTIVE_INGREDIENT} ilike '%' || $8 || '%')
@@ -335,7 +335,7 @@ async function getConsultants(riskCarrier: string | null = null) {
      left join healpath.patient_master pm on pm.patient_id = src.patient_id
      where ${consultant} is not null
        and ${consultant} !~* '${CONSULTANT_NOT_A_NAME}'
-       and ($1::text is null or ${sqlNormalize('pm.risk_carrier')} = $1)
+       and ($1::text is null or ${sqlNormalizeKey('pm.risk_carrier')} = lower($1))
      order by 1`,
     [riskCarrier],
   );

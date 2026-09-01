@@ -14,7 +14,13 @@ import { dbQuery, hasDb } from './pg';
 import type { Filters, Kpis, RankRow, TrendPoint, TrendResponse, TrendArrow, DoctorRow } from './types';
 import { PatientMasterRepository } from './patient-master-repository';
 import { PatientMasterService } from './patient-master-service';
-import { normalizeFilterList, normalizeFilterValue, sqlNormalize } from './filter-normalize';
+import {
+  filterValuesEqual,
+  normalizeFilterList,
+  normalizeFilterValue,
+  sqlNormalize,
+  sqlNormalizeKey,
+} from './filter-normalize';
 import snapshot from '../data/snapshot2026.json';
 import {
   type ChronicCalendarEntry,
@@ -46,11 +52,11 @@ export interface PerformanceEntityMetric {
 // filter is actually set — the null check short-circuits first.
 const VISIT_FILTER =
   "v.month_year like '2026-%' and ($1::text is null or v.month_year = $1) " +
-  `and ($2::text is null or ${sqlNormalize('v.doctor_specialty')} = $2) ` +
-  `and ($3::text is null or ${sqlNormalize('v.practitioner_name')} = $3) ` +
+  `and ($2::text is null or ${sqlNormalizeKey('v.doctor_specialty')} = lower($2)) ` +
+  `and ($3::text is null or ${sqlNormalizeKey('v.practitioner_name')} = lower($3)) ` +
   "and ($4::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $4 or lower(btrim(xdf.brand)) = $4)) " +
   "and ($5::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $5)) " +
-  "and ($6::text is null or pm.risk_carrier = $6)";
+  `and ($6::text is null or ${sqlNormalizeKey('pm.risk_carrier')} = lower($6))`;
 
 const ACUTE_PATIENT_MASTER_JOIN = PatientMasterRepository.acuteJoin('v');
 const ACUTE_RISK_CARRIER_SELECT = PatientMasterRepository.riskCarrierSelect();
@@ -335,7 +341,7 @@ let enumGeneration = 0;
 // Snapshot fallback for the doctor list (the bundled snapshot only carries the
 // top-20 doctor matrix, which is enough until the live cache warms / if DB down).
 function snapshotDoctors(): string[] {
-  return [...new Set((snapshot.all.doctors as DoctorRow[]).map((d) => d.practitioner))].sort();
+  return normalizeFilterList((snapshot.all.doctors as DoctorRow[]).map((d) => d.practitioner));
 }
 
 function snapshotOptions(): FilterOptions {
@@ -390,8 +396,8 @@ async function fetchFilterOptions(): Promise<FilterOptions> {
   // so they are normalized/deduplicated/sorted here rather than in SQL.
   return {
     months: months.length ? months.map((r) => r.month_year) : previous.months,
-    specialties: specialties.length ? specialties.map((r) => r.s) : previous.specialties,
-    doctors: doctors.length ? doctors.map((r) => r.d) : previous.doctors,
+    specialties: specialties.length ? normalizeFilterList(specialties.map((r) => r.s)) : previous.specialties,
+    doctors: doctors.length ? normalizeFilterList(doctors.map((r) => r.d)) : previous.doctors,
     riskCarriers: normalizeFilterList(riskCarriers),
   };
 }
@@ -482,17 +488,17 @@ async function fetchCascadingOptions(selection: CascadeSelection): Promise<Filte
     // Month is the top of the hierarchy: never narrowed by the levels below it.
     if (rowMonth) months.add(rowMonth);
 
-    const monthOk = !month || rowMonth === month;
+    const monthOk = !month || filterValuesEqual(rowMonth, month);
     if (monthOk && rowSpecialty) specialties.add(rowSpecialty);
 
-    const specialtyOk = !specialty || rowSpecialty === specialty;
+    const specialtyOk = !specialty || filterValuesEqual(rowSpecialty, specialty);
     if (monthOk && specialtyOk && rowDoctor) doctors.add(rowDoctor);
 
-    const doctorOk = !doctor || rowDoctor === doctor;
+    const doctorOk = !doctor || filterValuesEqual(rowDoctor, doctor);
     if (monthOk && specialtyOk && doctorOk && rowCarrier) riskCarriers.add(rowCarrier);
   }
 
-  const sorted = (values: Set<string>) => [...values].sort((a, b) => a.localeCompare(b));
+  const sorted = (values: Set<string>) => normalizeFilterList([...values]);
   const base = enumCache ?? snapshotOptions();
   // A value the levels above have narrowed away is deliberately NOT added back:
   // it is an impossible combination, and FilterBar resets a selection that is no
@@ -1022,10 +1028,10 @@ export async function getTrends(
   let points: TrendPoint[] | null = null;
   // Shared filter for the trend: specialty $1, doctor $2, drug $3, disease $4, risk carrier $5.
   const cond =
-    `($1::text is null or ${sqlNormalize('v.doctor_specialty')} = $1) and ($2::text is null or ${sqlNormalize('v.practitioner_name')} = $2) ` +
+    `($1::text is null or ${sqlNormalizeKey('v.doctor_specialty')} = lower($1)) and ($2::text is null or ${sqlNormalizeKey('v.practitioner_name')} = lower($2)) ` +
     "and ($3::text is null or v.visit_id in (select xdf.visit_id from healpath.drug_fact xdf where xdf.ac = $3 or lower(btrim(xdf.brand)) = $3)) " +
     "and ($4::text is null or v.visit_id in (select xdg.visit_id from healpath.diagnosis_fact xdg where xdg.icd_block = $4)) " +
-    "and ($5::text is null or pm.risk_carrier = $5)";
+    `and ($5::text is null or ${sqlNormalizeKey('pm.risk_carrier')} = lower($5))`;
   if (hasDb) {
     try {
       const rows = await dbQuery<{ month: string; visits: number; meds: number; labs: number; scans: number }>(`
@@ -2170,7 +2176,7 @@ export async function getChronicOverview(filters: ChronicOverviewFilters): Promi
     };
     if (!filteredRows.length) return { ...emptyChronicData(normalized), options };
     const scopedRows = f.medication
-      ? filteredRows.filter((row) => row.medication_name?.trim() === f.medication)
+      ? filteredRows.filter((row) => filterValuesEqual(row.medication_name, f.medication))
       : filteredRows;
 
     // Group rows by business-calendar period, ordered chronologically. Rows
