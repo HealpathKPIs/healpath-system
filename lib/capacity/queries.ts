@@ -183,14 +183,30 @@ export async function getCapacityConfig(): Promise<CapacityConfig> {
   }
 }
 
-/** Default to the last 30 days that actually have data, never today minus 30. */
+/**
+ * Default to the whole calendar month the latest schedule covers.
+ *
+ * Reporting is done by month, so a month is what should open, and a rolling
+ * window is the wrong shape: it cuts the first day or two off the month and
+ * makes totals quietly disagree with every figure anyone has already circulated.
+ *
+ * The arithmetic is deliberately done on the date string rather than through
+ * Date. An earlier version built the window with `new Date(...)` and
+ * `toISOString()`, which converts local midnight to UTC: in a positive-offset
+ * timezone the date rolls back a day and in UTC it does not, so the page showed
+ * the full month on a developer's machine and silently dropped 1 October in
+ * production. Nothing here needs a timezone, so nothing here uses one.
+ */
 export function defaultCapacityRange(coverage: CapacityCoverage): DateRange | null {
   const end = coverage.scheduleEnd ?? coverage.appointmentsEnd;
-  const start = coverage.scheduleStart ?? coverage.appointmentsStart;
-  if (!end || !start) return null;
-  const endDate = new Date(`${end}T00:00:00`);
-  const windowStart = new Date(endDate);
-  windowStart.setDate(windowStart.getDate() - 29);
-  const from = windowStart.toISOString().slice(0, 10);
-  return { from: from < start ? start : from, to: end };
+  if (!end) return null;
+
+  const year = Number(end.slice(0, 4));
+  const month = Number(end.slice(5, 7));
+  // Day 0 of the next month is the last day of this one, and the Date is only
+  // ever read for its day number, never formatted.
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const pad = (value: number) => String(value).padStart(2, '0');
+
+  return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(lastDay)}` };
 }

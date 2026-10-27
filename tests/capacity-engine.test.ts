@@ -93,16 +93,17 @@ test('a doctor with bookings but no roster has no utilisation rather than a fals
   assert.equal(doctor.yield, null);
 });
 
-test('Pending, Due and Waiting Room hold capacity but are not completed', () => {
+test('Pending, Due and Waiting Room are reported as completed', () => {
   const result = analyse([shift()], [group({ statusBucket: 'other', count: 8 })]);
   const doctor = result.doctors[0];
+  assert.equal(doctor.completed, 8, 'the visit happened; only the record was left open');
+  assert.equal(doctor.utilisation, 50);
+  assert.equal(doctor.yield, 50, 'so it counts toward yield as well');
+  // Kept only so the page can say how many were folded in.
   assert.equal(doctor.inProgress, 8);
-  assert.equal(doctor.completed, 0);
-  assert.equal(doctor.utilisation, 50, 'the slots are held, so utilisation reflects them');
-  assert.equal(doctor.yield, 0, 'nothing was completed, so yield is zero');
 });
 
-test('the four states account for every booking', () => {
+test('the three states account for every booking, with no double counting', () => {
   const result = analyse(
     [shift()],
     [
@@ -113,7 +114,10 @@ test('the four states account for every booking', () => {
     ],
   );
   const doctor = result.doctors[0];
-  assert.equal(doctor.completed + doctor.canceled + doctor.noShow + doctor.inProgress, doctor.booked);
+  assert.equal(doctor.booked, 10);
+  assert.equal(doctor.completed, 7, '3 completed plus the 4 folded in');
+  // inProgress is a subset of completed, so adding it again would overcount.
+  assert.equal(doctor.completed + doctor.canceled + doctor.noShow, doctor.booked);
 });
 
 test('specialty rows roll up their doctors and sub-specialties', () => {
@@ -151,4 +155,57 @@ test('totals agree with the sum of the doctor rows', () => {
   assert.equal(result.totals.rosteredMinutes, summed);
   assert.equal(result.totals.booked, 12);
   assert.equal(result.totals.doctors, 2);
+});
+
+/* ------------------------------ date range ------------------------------- */
+
+test('the default range is a whole calendar month, in every timezone', async () => {
+  const { defaultCapacityRange } = await import('../lib/capacity/queries');
+
+  const range = defaultCapacityRange({
+    scheduleStart: '2026-10-01',
+    scheduleEnd: '2026-10-31',
+    appointmentsStart: '2026-08-01',
+    appointmentsEnd: '2026-10-26',
+  });
+
+  // A rolling 30-day window built through Date/toISOString returned 2 October
+  // in UTC and 1 October east of it, so the deployed page dropped a day and
+  // under-reported every doctor rostered on the 1st.
+  assert.deepEqual(range, { from: '2026-10-01', to: '2026-10-31' });
+});
+
+test('month lengths and leap years are respected', async () => {
+  const { defaultCapacityRange } = await import('../lib/capacity/queries');
+  const month = (end: string) =>
+    defaultCapacityRange({
+      scheduleStart: null,
+      scheduleEnd: end,
+      appointmentsStart: null,
+      appointmentsEnd: null,
+    });
+
+  assert.deepEqual(month('2026-02-15'), { from: '2026-02-01', to: '2026-02-28' });
+  assert.deepEqual(month('2028-02-15'), { from: '2028-02-01', to: '2028-02-29' });
+  assert.deepEqual(month('2026-09-30'), { from: '2026-09-01', to: '2026-09-30' });
+  assert.deepEqual(month('2026-12-01'), { from: '2026-12-01', to: '2026-12-31' });
+});
+
+test('the range falls back to appointments when no schedule is loaded', async () => {
+  const { defaultCapacityRange } = await import('../lib/capacity/queries');
+  assert.deepEqual(
+    defaultCapacityRange({
+      scheduleStart: null,
+      scheduleEnd: null,
+      appointmentsStart: '2026-10-01',
+      appointmentsEnd: '2026-10-26',
+    }),
+    { from: '2026-10-01', to: '2026-10-31' },
+  );
+  assert.equal(
+    defaultCapacityRange({
+      scheduleStart: null, scheduleEnd: null, appointmentsStart: null, appointmentsEnd: null,
+    }),
+    null,
+  );
 });

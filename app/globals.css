@@ -1731,3 +1731,73 @@ html[data-theme="dark"] .loginbox input:focus { background: var(--surface); }
   .denied-actions { flex-direction: column; }
   .denied-actions a, .denied-actions button, .denied-actions form { width: 100%; }
 }
+
+/* ===================================================================
+   Capacity charts
+   Series colors are tokens so dark mode is a *chosen* set of steps,
+   not an automatic lightening of the light ones. Both sets were run
+   through the palette validator against their own surface: every
+   adjacent pair clears the CVD and normal-vision separation floors.
+   Amber is deliberately absent — amber against the cancelled red
+   scored 13.7 normal-vision, below the floor where full-color readers
+   can still tell two marks apart.
+   =================================================================== */
+:root {
+  --cap-util: #6366f1;      /* utilisation line */
+  --cap-yield: #16a36f;     /* yield line */
+  --cap-completed: #16a36f;
+  --cap-cancelled: #d92d20;
+  --cap-noshow: #2563eb;
+  --cap-unbooked: #64748b;  /* de-emphasis: absence of activity, not an identity */
+  --cap-bar: #6366f1;       /* sequential single hue for magnitude */
+  --cap-grid: var(--border);
+}
+html[data-theme="dark"] {
+  --cap-util: #7c83ff;
+  --cap-yield: #059669;
+  --cap-completed: #059669;
+  --cap-cancelled: #ef4444;
+  --cap-noshow: #3b82f6;
+  --cap-unbooked: #6d7a8d;
+  --cap-bar: #7c83ff;
+}
+
+.cap-tile-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.cap-tile { display: flex; flex-direction: column; gap: 10px; }
+.cap-tile-label { font-size: 12px; color: var(--text-muted); letter-spacing: .01em; }
+.cap-tile-value {
+  font-size: 30px;
+  font-weight: 650;
+  color: var(--text-strong);
+  line-height: 1.1;
+  /* Proportional figures: tabular-nums gives every digit a zero's width,
+     which reads loose at display size. Columns opt in separately. */
+}
+.cap-tile-foot { font-size: 12px; color: var(--text-muted); }
+.cap-legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 0 0 10px; padding: 0; list-style: none; }
+.cap-legend li { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.cap-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.cap-chart-wrap { position: relative; }
+.cap-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(15, 23, 42, .10));
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  z-index: 5;
+}
+.cap-tooltip-row { display: flex; align-items: center; gap: 6px; }
+.cap-tooltip-num { font-variant-numeric: tabular-nums; margin-left: auto; font-weight: 600; }
+@media (max-width: 760px) {
+  .cap-tile-value { font-size: 26px; }
+}

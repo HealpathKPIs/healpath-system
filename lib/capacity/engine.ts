@@ -15,8 +15,9 @@
  *  2. Appointments on a day the doctor is not rostered count in the totals but
  *     never in the ratio. Dividing their minutes by zero rostered minutes would
  *     inflate every percentage on the page.
- *  3. Pending, Due and Waiting Room are booked but not completed: they hold
- *     capacity, so they raise utilisation but never yield.
+ *  3. Pending, Due and Waiting Room are reported as completed. They are visits
+ *     that happened whose record was never closed, so they count toward yield;
+ *     the number folded in is kept separately so the page can say so.
  */
 
 import { resolveMainSpecialty, UNASSIGNED, type SpecialtyConfig } from './specialties';
@@ -65,6 +66,10 @@ export interface DoctorMetrics {
   completed: number;
   canceled: number;
   noShow: number;
+  /**
+   * How many of `completed` arrived with a Pending, Due or Waiting Room status.
+   * Reported alongside, never added to the total a second time.
+   */
   inProgress: number;
   /** Booked on days with no shift: counted here, never in the ratios. */
   notRostered: number;
@@ -191,9 +196,6 @@ export function analyse(
     entry.bookedMinutes += minutes;
 
     switch (group.statusBucket) {
-      case 'completed':
-        entry.completed += group.count;
-        break;
       case 'canceled':
         entry.canceled += group.count;
         break;
@@ -201,14 +203,20 @@ export function analyse(
         entry.noShow += group.count;
         break;
       default:
-        // Pending / Due Appointment / Waiting Room: the slot is held, so this
-        // counts toward utilisation but is not a completed consultation.
-        entry.inProgress += group.count;
+        // 'completed', plus Pending / Due Appointment / Waiting Room. Those
+        // three are visits that took place but whose record was never closed,
+        // so they are reported as completed. The count is kept in inProgress
+        // purely so the page can say how many were folded in - it is not a
+        // fourth state and must not be added to the total again.
+        entry.completed += group.count;
+        if (group.statusBucket === 'other') entry.inProgress += group.count;
     }
 
     if (rosteredDays.has(`${group.doctorId}|${group.date}`)) {
       entry.bookedMinutesRostered += minutes;
-      if (group.statusBucket === 'completed') entry.completedMinutesRostered += minutes;
+      if (group.statusBucket !== 'canceled' && group.statusBucket !== 'noshow') {
+        entry.completedMinutesRostered += minutes;
+      }
     } else {
       entry.notRostered += group.count;
     }
@@ -299,4 +307,84 @@ export function analyse(
     doctors: doctorRows,
     specialties: [...bySpecialty.values()].sort((a, b) => b.rosteredMinutes - a.rosteredMinutes),
   };
+}
+
+export interface DayPoint {
+  date: string;
+  rosteredMinutes: number;
+  bookedMinutesRostered: number;
+  completedMinutesRostered: number;
+  booked: number;
+  completed: number;
+  canceled: number;
+  noShow: number;
+  utilisation: number | null;
+  yield: number | null;
+}
+
+/**
+ * The same measures, one point per day.
+ *
+ * Built by partitioning the rows already fetched rather than by calling analyse
+ * once per date: the date is part of the group key, so a single pass gives
+ * every day and there is no N+1 query behind the trend line.
+ */
+export function analyseByDay(
+  shifts: ShiftInput[],
+  groups: AppointmentGroup[],
+  config: CapacityConfig = DEFAULT_CAPACITY_CONFIG,
+): DayPoint[] {
+  const days = new Map<string, DayPoint>();
+  const rosteredDays = new Set<string>();
+
+  const ensure = (date: string): DayPoint => {
+    let point = days.get(date);
+    if (!point) {
+      point = {
+        date,
+        rosteredMinutes: 0,
+        bookedMinutesRostered: 0,
+        completedMinutesRostered: 0,
+        booked: 0,
+        completed: 0,
+        canceled: 0,
+        noShow: 0,
+        utilisation: null,
+        yield: null,
+      };
+      days.set(date, point);
+    }
+    return point;
+  };
+
+  for (const shift of shifts) {
+    ensure(shift.date).rosteredMinutes += Math.max(0, shift.endMin - shift.startMin);
+    rosteredDays.add(`${shift.doctorId}|${shift.date}`);
+  }
+
+  for (const group of groups) {
+    const point = ensure(group.date);
+    const minutes = slotMinutes(group.apptType, config) * group.count;
+    point.booked += group.count;
+
+    if (group.statusBucket === 'canceled') point.canceled += group.count;
+    else if (group.statusBucket === 'noshow') point.noShow += group.count;
+    else point.completed += group.count;
+
+    // Same rule as analyse: a booking on an unrostered day has no minutes to
+    // be measured against, so it never enters the ratio.
+    if (rosteredDays.has(`${group.doctorId}|${group.date}`)) {
+      point.bookedMinutesRostered += minutes;
+      if (group.statusBucket !== 'canceled' && group.statusBucket !== 'noshow') {
+        point.completedMinutesRostered += minutes;
+      }
+    }
+  }
+
+  for (const point of days.values()) {
+    point.utilisation = ratio(point.bookedMinutesRostered, point.rosteredMinutes);
+    point.yield = ratio(point.completedMinutesRostered, point.rosteredMinutes);
+  }
+
+  return [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
