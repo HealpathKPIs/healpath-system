@@ -18,6 +18,10 @@ const ADMIN_ONLY_PATHS = [
   '/admin/import',
   '/admin/patient-master',
   '/chronic/import',
+  // Only the import page, never '/capacity' itself: this list matches by
+  // prefix, so listing the section would hide every capacity result from
+  // viewers, who are meant to see them.
+  '/capacity/import',
   '/users',
 ] as const;
 

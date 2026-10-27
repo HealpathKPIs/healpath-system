@@ -10,5 +10,11 @@ const nextConfig = {
     // navigation must always re-fetch.
     staleTimes: { dynamic: 0, static: 0 },
   },
+  // The capacity schema route reads its migration from disk to install it.
+  // Without this the .sql file is traced out of the serverless bundle and the
+  // route fails at runtime with "could not read" rather than at build time.
+  outputFileTracingIncludes: {
+    '/api/capacity/schema': ['./supabase/migrations/*.sql'],
+  },
 };
 module.exports = nextConfig;

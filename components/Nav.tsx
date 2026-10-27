@@ -49,6 +49,12 @@ const ICONS: Record<string, ReactNode> = {
   '/users': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M19 8v6M22 11h-6" /></svg>
   ),
+  '/capacity': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
+  ),
+  '/capacity/import': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
+  ),
 };
 
 const LINKS = [
@@ -62,6 +68,8 @@ const LINKS = [
   { href: '/patient-explorer', label: 'Patient Explorer' },
   { href: '/patient-360', label: 'Patient 360' },
   { href: '/performance', label: 'Performance Matrix' },
+  { href: '/capacity', label: 'Capacity' },
+  { href: '/capacity/import', label: 'Capacity Import' },
   { href: '/admin/import', label: 'Data Import' },
   { href: '/admin/patient-master', label: 'Patient Master' },
   { href: '/settings', label: 'Settings' },
