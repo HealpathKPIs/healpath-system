@@ -11,6 +11,9 @@ import {
   deleteWindow,
   findFileByHash,
   getCapacityPool,
+  linkPractitioner,
+  listPractitioners,
+  previewNameMatches,
   insertAppointments,
   insertLeave,
   insertShifts,
@@ -53,6 +56,8 @@ interface RequestBody {
   files?: IncomingFile[];
   mode?: 'preview' | 'import';
   force?: boolean;
+  /** Name decisions taken on the import screen, applied before resolution. */
+  links?: { aliasKey: string; aliasDisplay: string; practitionerId: number }[];
 }
 
 export async function POST(req: NextRequest) {
@@ -137,11 +142,18 @@ export async function POST(req: NextRequest) {
     if (mode === 'preview') {
       // Read-only lookups only: a preview must never open a transaction.
       const rowsToDelete = await countWindow(client, kind, coverage.start, coverage.end);
+      // What every written name would resolve to, so a split like "Dr. Ahmed
+      // Abo Auf" / "Dr. Ahmed Abo Auf Al Hoby" is visible and fixable before
+      // it becomes two rows of results.
+      const nameMatches = await previewNameMatches(client, parsed.doctors);
+      const practitioners = await listPractitioners(client);
       trace('15. Response returned (preview)');
       return NextResponse.json({
         preview: summarise(parsed),
         validation,
         coverage,
+        nameMatches,
+        practitioners,
         replacePlan: {
           scope: 'window',
           from: coverage.start,
@@ -207,6 +219,22 @@ export async function POST(req: NextRequest) {
         ),
       ],
     );
+
+    // Decisions made on the import screen are applied first, so resolution
+    // below finds them as ordinary aliases. Doing this inside the same
+    // transaction means a failed import leaves no half-applied links behind.
+    let linksApplied = 0;
+    for (const link of body.links ?? []) {
+      if (!link?.aliasKey || !link?.aliasDisplay || !Number.isFinite(link.practitionerId)) continue;
+      await linkPractitioner(client, {
+        aliasKey: link.aliasKey,
+        aliasDisplay: link.aliasDisplay,
+        practitionerId: link.practitionerId,
+        decidedBy: profile?.id ?? null,
+      });
+      linksApplied++;
+    }
+    if (linksApplied) trace(`9z. Applied ${linksApplied} name link(s) chosen before import`);
 
     trace('10. Resolving specialties and practitioners');
     const { map: specialties, created: specialtiesNew } = await resolveSpecialties(client, parsed.specialtyNames);
@@ -277,6 +305,7 @@ export async function POST(req: NextRequest) {
         needsReview: practitioners.needsReview.slice(0, 50),
       },
       specialtiesNew,
+      linksApplied,
       issues: parsed.issues.slice(0, 200),
       durationMs,
     });

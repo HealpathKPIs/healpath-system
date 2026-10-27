@@ -22,6 +22,7 @@ const ADMIN_ONLY_PATHS = [
   // prefix, so listing the section would hide every capacity result from
   // viewers, who are meant to see them.
   '/capacity/import',
+  '/capacity/names',
   '/users',
 ] as const;
 

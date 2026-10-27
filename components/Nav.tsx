@@ -55,6 +55,9 @@ const ICONS: Record<string, ReactNode> = {
   '/capacity/import': (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5" /><path d="M12 15V3" /></svg>
   ),
+  '/capacity/names': (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="m16 11 2 2 4-4" /></svg>
+  ),
 };
 
 const LINKS = [
@@ -70,6 +73,7 @@ const LINKS = [
   { href: '/performance', label: 'Performance Matrix' },
   { href: '/capacity', label: 'Capacity' },
   { href: '/capacity/import', label: 'Capacity Import' },
+  { href: '/capacity/names', label: 'Match Names' },
   { href: '/admin/import', label: 'Data Import' },
   { href: '/admin/patient-master', label: 'Patient Master' },
   { href: '/settings', label: 'Settings' },

@@ -1,7 +1,9 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+
+import NameMatchRow, { type NameMatch, type Practitioner } from '@/components/capacity/NameMatchRow';
 
 /**
  * Capacity import.
@@ -31,6 +33,8 @@ interface PreviewResponse {
   coverage: { start: string | null; end: string | null; dates: number };
   replacePlan: { from: string; to: string; rowsToDelete: number; rowsToInsert: number };
   duplicateOf: { fileName: string; completedAt: string | null } | null;
+  nameMatches: NameMatch[];
+  practitioners: Practitioner[];
 }
 
 interface ImportResponse {
@@ -39,6 +43,7 @@ interface ImportResponse {
   coverage: { start: string | null; end: string | null; dates: number };
   practitioners: { created: number; autoLinked: number; needsReview: { name: string; candidate: string; score: number; why: string }[] };
   specialtiesNew: number;
+  linksApplied: number;
   durationMs: number;
 }
 
@@ -53,6 +58,15 @@ const button: React.CSSProperties = {
   cursor: 'pointer',
 };
 const primary: React.CSSProperties = { ...button, background: '#2563eb', color: '#fff', borderColor: '#2563eb' };
+const linkButton: React.CSSProperties = {
+  border: 0,
+  background: 'none',
+  color: '#2563eb',
+  font: 'inherit',
+  padding: 0,
+  cursor: 'pointer',
+  textDecoration: 'underline',
+};
 
 /** Upload one file straight to storage. XHR, because fetch cannot report progress. */
 function putToStorage(signedUrl: string, file: File, onProgress: (ratio: number) => void) {
@@ -82,6 +96,12 @@ export default function CapacityImportClient() {
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [result, setResult] = useState<ImportResponse | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  // Name decisions taken here, applied by the server before it resolves
+  // anything. Nothing is written until Import is pressed.
+  const [links, setLinks] = useState<
+    Record<string, { practitionerId: number; targetDisplay: string; aliasDisplay: string }>
+  >({});
+  const [separate, setSeparate] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const reset = useCallback(() => {
@@ -90,6 +110,8 @@ export default function CapacityImportClient() {
     setResult(null);
     setErrors([]);
     setProgress(0);
+    setLinks({});
+    setSeparate([]);
     setPhase('idle');
   }, []);
 
@@ -155,7 +177,17 @@ export default function CapacityImportClient() {
         const response = await fetch('/api/capacity/import', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ kind, mode: 'import', files: uploaded, force }),
+          body: JSON.stringify({
+            kind,
+            mode: 'import',
+            files: uploaded,
+            force,
+            links: Object.entries(links).map(([aliasKey, value]) => ({
+              aliasKey,
+              aliasDisplay: value.aliasDisplay,
+              practitionerId: value.practitionerId,
+            })),
+          }),
         });
         const body = await response.json().catch(() => null);
         if (!response.ok) {
@@ -173,10 +205,20 @@ export default function CapacityImportClient() {
         setPhase(next);
       }
     },
-    [kind, router, uploaded],
+    [kind, links, router, uploaded],
   );
 
   const busy = phase === 'uploading' || phase === 'previewing' || phase === 'importing';
+
+  // Names already on record need no decision, and near-identical spellings are
+  // joined without asking. What is left is the band where a person has to look.
+  const matches = useMemo(() => preview?.nameMatches ?? [], [preview]);
+  const recognised = matches.filter((match) => match.status === 'known').length;
+  const autoLinking = matches.filter((match) => match.status === 'auto').length;
+  const undecided = useMemo(
+    () => matches.filter((match) => match.status === 'review' || match.status === 'new'),
+    [matches],
+  );
 
   return (
     <>
@@ -263,20 +305,104 @@ export default function CapacityImportClient() {
             ))}
           </ul>
 
-          <p className="muted">
+          <p className="muted" style={{ marginBottom: 0 }}>
             This will replace <strong>{preview.replacePlan.rowsToDelete.toLocaleString()}</strong> existing rows between{' '}
             {preview.replacePlan.from} and {preview.replacePlan.to}, and insert{' '}
             <strong>{preview.replacePlan.rowsToInsert.toLocaleString()}</strong>.
           </p>
+        </div>
+      )}
 
-          <button
-            type="button"
-            style={primary}
-            disabled={busy || !preview.validation.ready}
-            onClick={() => void runImport(false)}
-          >
-            Import
-          </button>
+      {preview && phase !== 'done' && (
+        <div className="card" style={card}>
+          <p className="section-title">
+            Check the names {undecided.length > 0 && <span style={{ color: '#b45309' }}>· {undecided.length} to decide</span>}
+          </p>
+          <p className="muted">
+            {recognised} of {preview.nameMatches.length} names already belong to a doctor on record.
+            {autoLinking > 0 && ` ${autoLinking} more will be joined automatically because the spelling is all but identical.`}
+            {undecided.length === 0
+              ? ' Nothing needs a decision.'
+              : ' The rest are below, because joining the wrong two people is far harder to undo than confirming a link now.'}
+          </p>
+
+          {undecided.map((match) => {
+            const chosen = links[match.nameKey];
+            if (chosen) {
+              return (
+                <div key={match.nameKey} style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 12 }}>
+                  <span className="muted">
+                    ✓ <strong>{match.name}</strong> will be filed under <strong>{chosen.targetDisplay}</strong>.{' '}
+                    <button
+                      type="button"
+                      style={{ ...linkButton }}
+                      onClick={() =>
+                        setLinks((previous) => {
+                          const next = { ...previous };
+                          delete next[match.nameKey];
+                          return next;
+                        })
+                      }
+                    >
+                      undo
+                    </button>
+                  </span>
+                </div>
+              );
+            }
+            if (separate.includes(match.nameKey)) {
+              return (
+                <div key={match.nameKey} style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 12 }}>
+                  <span className="muted">
+                    ✓ <strong>{match.name}</strong> will stay a separate person.{' '}
+                    <button
+                      type="button"
+                      style={linkButton}
+                      onClick={() => setSeparate((previous) => previous.filter((key) => key !== match.nameKey))}
+                    >
+                      undo
+                    </button>
+                  </span>
+                </div>
+              );
+            }
+            return (
+              <NameMatchRow
+                key={match.nameKey}
+                match={match}
+                practitioners={preview.practitioners}
+                busy={busy}
+                onLink={(practitionerId) =>
+                  setLinks((previous) => ({
+                    ...previous,
+                    [match.nameKey]: {
+                      practitionerId,
+                      aliasDisplay: match.name,
+                      targetDisplay:
+                        preview.practitioners.find((person) => person.id === practitionerId)?.display ?? 'that doctor',
+                    },
+                  }))
+                }
+                onReject={() => setSeparate((previous) => [...previous, match.nameKey])}
+              />
+            );
+          })}
+
+          <div style={{ marginTop: 18 }}>
+            <button
+              type="button"
+              style={primary}
+              disabled={busy || !preview.validation.ready}
+              onClick={() => void runImport(false)}
+            >
+              Import
+            </button>
+            {undecided.length > 0 && Object.keys(links).length + separate.length < undecided.length && (
+              <span className="muted" style={{ marginLeft: 10, fontSize: 13 }}>
+                Undecided names are kept as separate people, which you can still fix afterwards on the Match names page.
+              </span>
+            )}
+          </div>
         </div>
       )}
 

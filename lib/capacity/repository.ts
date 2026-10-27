@@ -459,6 +459,271 @@ export async function insertAppointments(
   );
 }
 
+/* ------------------------------ name review ----------------------------- */
+
+export interface NameCandidate {
+  practitionerId: number;
+  display: string;
+  score: number;
+  why: string;
+  verify: boolean;
+  /** True when this match is safe to apply without a person looking at it. */
+  auto: boolean;
+}
+
+export interface NameMatch {
+  /** The spelling as written in the file or already stored. */
+  name: string;
+  nameKey: string;
+  /** Set when this spelling already resolves to a practitioner. */
+  practitionerId: number | null;
+  status: 'known' | 'auto' | 'review' | 'new';
+  candidates: NameCandidate[];
+  /** Rows already attached to this spelling, when it is already stored. */
+  appointments?: number;
+  shifts?: number;
+}
+
+function rankAgainstRoster(
+  display: string,
+  roster: { id: number; key: string; display: string }[],
+  excludeId?: number,
+): NameCandidate[] {
+  const scored = roster
+    .filter((candidate) => candidate.id !== excludeId)
+    .map((candidate) => ({ candidate, score: nameScore(display, candidate.display) }))
+    .filter((row) => row.score.s >= SUGGEST_THRESHOLD)
+    .sort((a, b) => b.score.s - a.score.s)
+    .slice(0, 6);
+
+  return scored.map((row, index) => ({
+    practitionerId: row.candidate.id,
+    display: row.candidate.display,
+    score: row.score.s,
+    why: row.score.why,
+    verify: Boolean(row.score.verify),
+    auto: index === 0 && canAutoLink(row.score, scored[1]?.score ?? null),
+  }));
+}
+
+/**
+ * What would happen to each written name, without writing anything.
+ *
+ * This is what the import screen shows before anything is committed: a name
+ * already known resolves silently, one that matches an existing doctor closely
+ * enough links itself, and anything less certain is listed for a decision. The
+ * point is that a split like "Dr. Ahmed Abo Auf" and "Dr. Ahmed Abo Auf Al
+ * Hoby" is visible and fixable *before* it becomes two rows of results.
+ */
+export async function previewNameMatches(
+  client: PoolClient,
+  entries: { key: string; display: string }[],
+): Promise<NameMatch[]> {
+  const wanted = new Map<string, string>();
+  for (const entry of entries) {
+    if (!entry.key) continue;
+    const current = wanted.get(entry.key);
+    if (!current || entry.display.length > current.length) wanted.set(entry.key, entry.display);
+  }
+  if (!wanted.size) return [];
+
+  const roster = await loadRoster(client);
+  const { byAlias, rejected } = await loadAliases(client);
+
+  const matches: NameMatch[] = [];
+  for (const [key, display] of wanted) {
+    const viaAlias = byAlias.get(key);
+    const viaKey = roster.find((row) => row.key === key);
+    if (viaAlias != null || viaKey) {
+      matches.push({
+        name: display,
+        nameKey: key,
+        practitionerId: viaAlias ?? viaKey!.id,
+        status: 'known',
+        candidates: [],
+      });
+      continue;
+    }
+
+    const candidates = rejected.has(key) ? [] : rankAgainstRoster(display, roster);
+    matches.push({
+      name: display,
+      nameKey: key,
+      practitionerId: null,
+      status: candidates[0]?.auto ? 'auto' : candidates.length ? 'review' : 'new',
+      candidates,
+    });
+  }
+
+  return matches.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Practitioners already stored that look like they are the same person as
+ * another: one carries the rostered hours, the other the bookings.
+ */
+export async function listStoredNameConflicts(client: PoolClient): Promise<NameMatch[]> {
+  const { rows } = await client.query<{
+    id: string;
+    display_name: string;
+    name_key: string;
+    shifts: string;
+    appts: string;
+  }>(
+    `select p.id, p.display_name, p.name_key,
+            (select count(*) from healpath.capacity_schedule_shifts s where s.practitioner_id = p.id)::text as shifts,
+            (select count(*) from healpath.capacity_appointments a where a.practitioner_id = p.id)::text as appts
+       from healpath.capacity_practitioners p
+      order by p.display_name`,
+  );
+
+  const all = rows.map((row) => ({
+    id: Number(row.id),
+    key: row.name_key,
+    display: row.display_name,
+    shifts: Number(row.shifts),
+    appts: Number(row.appts),
+  }));
+  // A doctor with bookings but no rostered time is the shape that matters: it
+  // is either a genuine gap in the schedule or the other half of a split name.
+  const rostered = all.filter((row) => row.shifts > 0);
+  const orphans = all.filter((row) => row.shifts === 0 && row.appts > 0);
+  const { rejected } = await loadAliases(client);
+
+  return orphans.map((orphan) => {
+    const candidates = rejected.has(orphan.key) ? [] : rankAgainstRoster(orphan.display, rostered, orphan.id);
+    return {
+      name: orphan.display,
+      nameKey: orphan.key,
+      practitionerId: orphan.id,
+      status: candidates.length ? 'review' : 'new',
+      candidates,
+      appointments: orphan.appts,
+      shifts: orphan.shifts,
+    } satisfies NameMatch;
+  });
+}
+
+async function loadRoster(client: PoolClient) {
+  const { rows } = await client.query<{ id: string; name_key: string; display_name: string }>(
+    'select id, name_key, display_name from healpath.capacity_practitioners',
+  );
+  return rows.map((row) => ({ id: Number(row.id), key: row.name_key, display: row.display_name }));
+}
+
+async function loadAliases(client: PoolClient) {
+  const { rows } = await client.query<{ alias_key: string; practitioner_id: string; source: string }>(
+    'select alias_key, practitioner_id, source from healpath.capacity_practitioner_aliases',
+  );
+  return {
+    byAlias: new Map(
+      rows.filter((row) => row.source !== 'rejected').map((row) => [row.alias_key, Number(row.practitioner_id)]),
+    ),
+    rejected: new Set(rows.filter((row) => row.source === 'rejected').map((row) => row.alias_key)),
+  };
+}
+
+/**
+ * Record that a spelling belongs to a practitioner, and move anything already
+ * filed under it. Used both before an import and to repair one already done.
+ *
+ * The duplicate row is deleted only once nothing points at it, so a mistake
+ * here cannot orphan rows: the facts move first, in the same transaction.
+ */
+export async function linkPractitioner(
+  client: PoolClient,
+  args: { aliasKey: string; aliasDisplay: string; practitionerId: number; decidedBy?: string | null },
+): Promise<{ movedAppointments: number; movedShifts: number; removedDuplicate: boolean }> {
+  const { aliasKey, aliasDisplay, practitionerId, decidedBy } = args;
+
+  await client.query(
+    `insert into healpath.capacity_practitioner_aliases
+       (alias_key, alias_display, practitioner_id, source, decided_by)
+     values ($1, $2, $3, 'manual', $4)
+     on conflict (alias_key) do update
+       set practitioner_id = excluded.practitioner_id,
+           alias_display   = excluded.alias_display,
+           source          = 'manual',
+           decided_by      = excluded.decided_by,
+           decided_at      = now()`,
+    [aliasKey, aliasDisplay, practitionerId, decidedBy ?? null],
+  );
+
+  const duplicate = await client.query<{ id: string }>(
+    'select id from healpath.capacity_practitioners where name_key = $1 and id <> $2',
+    [aliasKey, practitionerId],
+  );
+  if (!duplicate.rows.length) return { movedAppointments: 0, movedShifts: 0, removedDuplicate: false };
+
+  const duplicateId = Number(duplicate.rows[0].id);
+  const appts = await client.query(
+    'update healpath.capacity_appointments set practitioner_id = $2 where practitioner_id = $1',
+    [duplicateId, practitionerId],
+  );
+  const shifts = await client.query(
+    'update healpath.capacity_schedule_shifts set practitioner_id = $2 where practitioner_id = $1',
+    [duplicateId, practitionerId],
+  );
+  // Leave rows carry a unique key per doctor and day, so a collision here means
+  // the surviving row already records that day. Drop the duplicate's copy.
+  await client.query(
+    `delete from healpath.capacity_leave_days dup
+      where dup.practitioner_id = $1
+        and exists (select 1 from healpath.capacity_leave_days keep
+                     where keep.practitioner_id = $2
+                       and keep.work_date = dup.work_date
+                       and keep.leave_kind = dup.leave_kind)`,
+    [duplicateId, practitionerId],
+  );
+  await client.query(
+    'update healpath.capacity_leave_days set practitioner_id = $2 where practitioner_id = $1',
+    [duplicateId, practitionerId],
+  );
+  await client.query(
+    'update healpath.capacity_practitioner_aliases set practitioner_id = $2 where practitioner_id = $1',
+    [duplicateId, practitionerId],
+  );
+  await client.query('delete from healpath.capacity_practitioners where id = $1', [duplicateId]);
+
+  return {
+    movedAppointments: appts.rowCount ?? 0,
+    movedShifts: shifts.rowCount ?? 0,
+    removedDuplicate: true,
+  };
+}
+
+/** Record that a spelling is NOT the suggested person, so it stops being offered. */
+export async function rejectPractitionerMatch(
+  client: PoolClient,
+  args: { aliasKey: string; aliasDisplay: string; practitionerId: number; decidedBy?: string | null },
+): Promise<void> {
+  await client.query(
+    `insert into healpath.capacity_practitioner_aliases
+       (alias_key, alias_display, practitioner_id, source, decided_by)
+     values ($1, $2, $3, 'rejected', $4)
+     on conflict (alias_key) do update
+       set source = 'rejected', decided_by = excluded.decided_by, decided_at = now()`,
+    [args.aliasKey, args.aliasDisplay, args.practitionerId, args.decidedBy ?? null],
+  );
+}
+
+/** Every practitioner, for the "link to someone else" picker. */
+export async function listPractitioners(
+  client: PoolClient,
+): Promise<{ id: number; display: string; rosteredMinutes: number }[]> {
+  const { rows } = await client.query<{ id: string; display_name: string; minutes: string | null }>(
+    `select p.id, p.display_name,
+            (select sum(s.minutes) from healpath.capacity_schedule_shifts s where s.practitioner_id = p.id) as minutes
+       from healpath.capacity_practitioners p
+      order by p.display_name`,
+  );
+  return rows.map((row) => ({
+    id: Number(row.id),
+    display: row.display_name,
+    rosteredMinutes: Number(row.minutes ?? 0),
+  }));
+}
+
 /** Has this exact file already been imported? */
 export async function findFileByHash(
   client: PoolClient,
