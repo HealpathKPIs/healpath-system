@@ -95,12 +95,25 @@ export async function resolveSpecialties(
   const distinct = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
   if (!distinct.length) return { map: new Map(), created: 0 };
 
+  const key = (name: string) => name.toLowerCase().replace(/\s+/g, ' ').trim();
+
   const before = await client.query<{ id: string; name: string }>(
     'select id, name from healpath.capacity_specialties',
   );
-  const existing = new Map(before.rows.map((row) => [row.name.toLowerCase().trim(), Number(row.id)]));
+  const existing = new Map(before.rows.map((row) => [key(row.name), Number(row.id)]));
 
-  const missing = distinct.filter((name) => !existing.has(name.toLowerCase().trim()));
+  // A spelling the schedule uses may have been mapped to a differently named
+  // specialty. Without this lookup a rename lasts only until the next import:
+  // the schedule still writes "Internal", nothing matches that name any more,
+  // and a second row appears under the old spelling.
+  const aliasRows = await client
+    .query<{ alias_key: string; specialty_id: string }>(
+      'select alias_key, specialty_id from healpath.capacity_specialty_aliases',
+    )
+    .catch(() => ({ rows: [] as { alias_key: string; specialty_id: string }[] }));
+  const aliases = new Map(aliasRows.rows.map((row) => [row.alias_key, Number(row.specialty_id)]));
+
+  const missing = distinct.filter((name) => !existing.has(key(name)) && !aliases.has(key(name)));
   if (missing.length) {
     await client.query(
       `insert into healpath.capacity_specialties (name)
@@ -114,11 +127,12 @@ export async function resolveSpecialties(
     'select id, name from healpath.capacity_specialties',
   );
   const map = new Map<string, number>();
-  for (const row of after.rows) map.set(row.name.toLowerCase().trim(), Number(row.id));
+  for (const row of after.rows) map.set(key(row.name), Number(row.id));
 
   const resolved = new Map<string, number>();
   for (const name of distinct) {
-    const id = map.get(name.toLowerCase().trim());
+    // An alias wins: it is a decision somebody made about this spelling.
+    const id = aliases.get(key(name)) ?? map.get(key(name));
     if (id != null) resolved.set(name, id);
   }
   return { map: resolved, created: missing.length };
