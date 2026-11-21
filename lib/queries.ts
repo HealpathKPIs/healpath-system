@@ -538,24 +538,58 @@ export async function getKpis(f: Filters): Promise<Kpis> {
         dayClause = ` and (v.prescription_date is null or extract(day from v.prescription_date) <= $${params.length})`;
       }
       const kpiVisitFilter = `${VISIT_FILTER}${dayClause}`;
+      // One pass over the filtered visits, not six.
+      //
+      // Every measure below is taken over the same row set, so the earlier
+      // shape re-stated the filter six times: once for `base`, once each for
+      // the doctor and specialty counts, and once inside each of the three
+      // fact joins. On the 2026 data that is six scans of a 126,800-row table
+      // for one KPI band. The filter is stated once now, `base` holds the four
+      // columns the measures need, and the fact tables join against it.
+      //
+      // Two equivalences this relies on, both checked against the live
+      // database before the change:
+      //
+      //  - count(distinct visit_id) is count(*) here. visit_id is the PRIMARY
+      //    KEY of healpath.visits, and the only join is a LEFT JOIN to
+      //    patient_master on ITS primary key, so a visit cannot appear twice.
+      //    Measured on the 2026 rows: 126,800 joined rows, 126,800 distinct
+      //    visit ids, and still equal with the drug and diagnosis IN-predicates
+      //    active (89,615 / 89,615). patient_id keeps its distinct - one
+      //    patient has many visits.
+      //  - the fact joins ran `fact join visits where <filter>`; joining them
+      //    to `base` selects exactly those same visits. Each fact row still
+      //    counts once, because base holds one row per visit.
+      //
+      // `totals` is a bare aggregate, so it yields one row even when nothing
+      // matches: visits = 0 and the averages divide by nullif(0, 0) = null,
+      // which is what the old shape returned for an empty filter too.
       const rows = await dbQuery<Record<string, unknown>>(`
         with base as (
-          select v.visit_id, v.patient_id, ${ACUTE_RISK_CARRIER_SELECT}
+          select v.visit_id, v.patient_id, v.practitioner_name, v.doctor_specialty
           from healpath.visits v
           ${ACUTE_PATIENT_MASTER_JOIN}
           where ${kpiVisitFilter}
+        ),
+        totals as (
+          select count(*) as visits,
+                 count(distinct patient_id) as patients,
+                 count(distinct practitioner_name) as doctors,
+                 count(distinct doctor_specialty) as specialties
+          from base
         )
         select
-          (select count(distinct visit_id) from base) as visits,
-          (select count(distinct patient_id) from base) as patients,
-          (select count(distinct v.practitioner_name) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter}) as doctors,
-          (select count(distinct v.doctor_specialty) from healpath.visits v ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter}) as specialties,
-          (select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter})
-            / nullif((select count(distinct visit_id) from base), 0) as avg_meds,
-          (select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter})
-            / nullif((select count(distinct visit_id) from base), 0) as avg_labs,
-          (select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where ${kpiVisitFilter})
-            / nullif((select count(distinct visit_id) from base), 0) as avg_scans
+          t.visits,
+          t.patients,
+          t.doctors,
+          t.specialties,
+          (select count(d.brand)::numeric from healpath.drug_fact d join base b on b.visit_id = d.visit_id)
+            / nullif(t.visits, 0) as avg_meds,
+          (select count(l.tests)::numeric from healpath.lab_fact l join base b on b.visit_id = l.visit_id)
+            / nullif(t.visits, 0) as avg_labs,
+          (select count(s.tests)::numeric from healpath.scan_fact s join base b on b.visit_id = s.visit_id)
+            / nullif(t.visits, 0) as avg_scans
+        from totals t
       `, params);
       const r = rows[0];
       if (r) {
@@ -1034,20 +1068,71 @@ export async function getTrends(
     `and ($5::text is null or ${sqlNormalizeKey('pm.risk_carrier')} = lower($5))`;
   if (hasDb) {
     try {
+      // Each fact table aggregated once, not once per month.
+      //
+      // The three measures used to be correlated subqueries keyed on mo.my, so
+      // they re-ran for every month in the series: with eleven months of 2026
+      // loaded that is thirty-three passes over drug_fact, lab_fact and
+      // scan_fact, each one re-stating `cond` and re-joining healpath.visits.
+      // EXPLAIN showed those nodes running at loops=11 and four separate scans
+      // of visits. Now `base` states the filter once, each fact table is
+      // grouped by month in a single pass, and the three monthly aggregates are
+      // joined on. Eleven months or fifty, it stays four scans.
+      //
+      // Behaviour that had to survive the rewrite, and is covered by the
+      // before/after comparison across all 32 filter combinations:
+      //
+      //  - count(f.brand) and count(f.tests) still ignore NULLs. count(*) here
+      //    would silently start counting fact rows that carry no value.
+      //  - coalesce(..., 0) is load-bearing. The old correlated subquery
+      //    returned 0 for a month with no fact rows at all, because count()
+      //    over an empty set is 0; a LEFT JOIN returns NULL instead, and
+      //    without the coalesce such a month would plot null rather than 0.00.
+      //    Verified against a doctor whose 2026-04 has 504 visits and no scan
+      //    rows: 0.00 either way, and null without the coalesce.
+      //  - the series is still driven by `mo`, so months with no matching
+      //    visits stay absent and an empty result still falls through to the
+      //    snapshot path below.
+      //  - count(distinct visit_id) is kept as it was, rather than taking the
+      //    count(*) that the primary key would allow. That is a separate
+      //    change with its own justification; this one is only about scans.
       const rows = await dbQuery<{ month: string; visits: number; meds: number; labs: number; scans: number }>(`
-        with mo as (
-          select v.month_year as my, count(distinct v.visit_id) as visits
+        with base as (
+          select v.visit_id, v.month_year
           from healpath.visits v
           ${ACUTE_PATIENT_MASTER_JOIN}
           where v.month_year like '2026-%' and ${cond}
-          group by v.month_year
+        ),
+        mo as (
+          select month_year as my, count(distinct visit_id) as visits
+          from base
+          group by month_year
+        ),
+        md as (
+          select b.month_year as my, count(f.brand)::numeric as n
+          from healpath.drug_fact f join base b on b.visit_id = f.visit_id
+          group by b.month_year
+        ),
+        ml as (
+          select b.month_year as my, count(f.tests)::numeric as n
+          from healpath.lab_fact f join base b on b.visit_id = f.visit_id
+          group by b.month_year
+        ),
+        ms as (
+          select b.month_year as my, count(f.tests)::numeric as n
+          from healpath.scan_fact f join base b on b.visit_id = f.visit_id
+          group by b.month_year
         )
         select mo.my as month,
           mo.visits::int as visits,
-          round((select count(d.brand)::numeric from healpath.drug_fact d join healpath.visits v on v.visit_id = d.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as meds,
-          round((select count(l.tests)::numeric from healpath.lab_fact l join healpath.visits v on v.visit_id = l.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as labs,
-          round((select count(s.tests)::numeric from healpath.scan_fact s join healpath.visits v on v.visit_id = s.visit_id ${ACUTE_PATIENT_MASTER_JOIN} where v.month_year = mo.my and ${cond}) / nullif(mo.visits, 0), 2) as scans
-        from mo order by mo.my
+          round(coalesce(md.n, 0) / nullif(mo.visits, 0), 2) as meds,
+          round(coalesce(ml.n, 0) / nullif(mo.visits, 0), 2) as labs,
+          round(coalesce(ms.n, 0) / nullif(mo.visits, 0), 2) as scans
+        from mo
+        left join md on md.my = mo.my
+        left join ml on ml.my = mo.my
+        left join ms on ms.my = mo.my
+        order by mo.my
       `, [specialtyParam(specialty), doctorParam(doctor), drugParam(drug), diseaseParam(disease), riskCarrierParam(riskCarrier)]);
       if (rows.length) points = rows.map((r) => ({
         month: r.month,
