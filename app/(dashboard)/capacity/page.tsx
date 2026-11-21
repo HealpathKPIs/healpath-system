@@ -3,11 +3,14 @@ import DataTable from '@/components/DataTable';
 import CapacityRangeBar from '@/components/capacity/CapacityRangeBar';
 import CapacityTrend from '@/components/capacity/CapacityTrend';
 import SpecialtyBars from '@/components/capacity/SpecialtyBars';
+import SpecialtyBracketGrid from '@/components/capacity/SpecialtyBracketGrid';
 import SplitBar from '@/components/capacity/SplitBar';
 import StatTile from '@/components/capacity/StatTile';
+import { analyseSpecialtyBrackets } from '@/lib/capacity/brackets';
 import { analyse, analyseByDay } from '@/lib/capacity/engine';
 import {
   defaultCapacityRange,
+  getCapacityAppointmentBrackets,
   getCapacityAppointmentGroups,
   getCapacityConfig,
   getCapacityCoverage,
@@ -62,15 +65,20 @@ export default async function Capacity({ searchParams }: { searchParams: SearchP
     to: searchParams.to ?? fromMonth?.to ?? fallback.to,
   };
 
-  const [config, shifts, groups] = await Promise.all([
+  const [config, shifts, groups, bracketGroups] = await Promise.all([
     getCapacityConfig(),
     getCapacityShifts(range),
     getCapacityAppointmentGroups(range),
+    getCapacityAppointmentBrackets(range),
   ]);
 
   const result = analyse(shifts, groups, config);
   const days = analyseByDay(shifts, groups, config);
   const { totals } = result;
+
+  // The doctor rows carry the resolved main specialty, so the bracket cut is
+  // built from the same mapping as the specialty table rather than a second one.
+  const byBracket = analyseSpecialtyBrackets(shifts, bracketGroups, result.doctors, config);
 
   // Every part below is measured against the same rostered minutes the KPI
   // tiles use, which is what makes the four shares add to exactly 100%.
@@ -104,6 +112,28 @@ export default async function Capacity({ searchParams }: { searchParams: SearchP
     yieldPct: row.yield == null ? 0 : Number(row.yield.toFixed(1)),
   }));
 
+  // One row per (specialty, bracket) that has anything in it. The roll-ups are
+  // deliberately left out: sorted by any column they interleave with the very
+  // cells they are made of, and the grid above already carries them.
+  const bracketRows = byBracket.rows.flatMap((row) =>
+    row.cells
+      .map((cell, index) => ({
+        specialty: cell.specialty,
+        bracket: byBracket.brackets[index].label,
+        doctors: cell.doctors,
+        rostered: Number(hours(cell.rosteredMinutes).toFixed(1)),
+        slots: cell.slots,
+        booked: cell.booked,
+        utilisation: cell.utilisation == null ? 0 : Number(cell.utilisation.toFixed(1)),
+        completed: cell.completed,
+        cancelled: cell.canceled,
+        noShow: cell.noShow,
+        notRostered: cell.notRostered,
+        unbooked: cell.unbookedSlots,
+      }))
+      .filter((cell) => cell.rostered > 0 || cell.booked > 0 || cell.notRostered > 0),
+  );
+
   // Advisories ship alongside the numbers on purpose. A utilisation figure with
   // no statement of what it could not see is a number nobody can defend.
   const notices: string[] = [];
@@ -124,6 +154,12 @@ export default async function Capacity({ searchParams }: { searchParams: SearchP
     notices.push(
       `${unassigned} ${unassigned === 1 ? 'doctor has' : 'doctors have'} no specialty. ` +
         'The appointment export carries no specialty column, so it is only known for doctors who appear in a schedule.',
+    );
+  }
+  if (byBracket.untimed > 0) {
+    notices.push(
+      `${byBracket.untimed.toLocaleString()} appointments carry no start time in the export, so they cannot be placed in a ` +
+        'time bracket. They are in every other figure on this page, but not in the specialty-by-bracket grid.',
     );
   }
   const emptyDays = days.filter((day) => day.rosteredMinutes > 0 && day.booked === 0).length;
@@ -224,6 +260,50 @@ export default async function Capacity({ searchParams }: { searchParams: SearchP
         </p>
         <CapacityTrend
           points={days.map((day) => ({ date: day.date, utilisation: day.utilisation, yield: day.yield }))}
+        />
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <p className="section-title">Specialty by bracket</p>
+        <p className="muted" style={{ marginTop: -4, marginBottom: 14 }}>
+          Utilisation in two-hour windows: booked time divided by the time actually rostered inside
+          that window. A monthly figure hides this — the same specialty can run over capacity at 4pm
+          and half empty at 8pm, and only this view says which hours to move.
+        </p>
+        <SpecialtyBracketGrid
+          brackets={byBracket.brackets}
+          rows={byBracket.rows}
+          columnTotals={byBracket.columnTotals}
+          grandTotal={byBracket.grandTotal}
+        />
+      </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <p className="section-title">Specialty by bracket · detail</p>
+        <p className="muted" style={{ marginTop: -4, marginBottom: 14 }}>
+          Every bracket with rostered time or bookings, biggest block of never-booked slots first.
+          Booked is what was booked against the roster, so Booked ÷ Slots is the utilisation beside
+          it; Not rostered is everything booked in that window on a day with no shift, and the two
+          together are the Booked figure in the specialty table below. Sort by any column.
+        </p>
+        <DataTable
+          searchable
+          searchKey="specialty"
+          rows={bracketRows}
+          columns={[
+            { key: 'specialty', label: 'Specialty' },
+            { key: 'bracket', label: 'Bracket' },
+            { key: 'doctors', label: 'Doctors', num: true },
+            { key: 'rostered', label: 'Rostered h', num: true, decimals: 1 },
+            { key: 'slots', label: 'Slots', num: true },
+            { key: 'booked', label: 'Booked', num: true },
+            { key: 'utilisation', label: 'Utilisation %', num: true, decimals: 1 },
+            { key: 'completed', label: 'Completed', num: true },
+            { key: 'cancelled', label: 'Cancelled', num: true },
+            { key: 'noShow', label: 'No-show', num: true },
+            { key: 'notRostered', label: 'Not rostered', num: true },
+            { key: 'unbooked', label: 'Unbooked slots', num: true },
+          ]}
         />
       </div>
 

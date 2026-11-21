@@ -1,5 +1,6 @@
 import { dbQuery, hasDb } from '@/lib/pg';
 
+import { BRACKET_MINUTES, type BracketAppointmentGroup } from './brackets';
 import {
   DEFAULT_CAPACITY_CONFIG,
   type AppointmentGroup,
@@ -140,6 +141,56 @@ export async function getCapacityAppointmentGroups(range: DateRange): Promise<Ap
     }));
   } catch (error) {
     console.warn('capacity appointments query failed:', (error as Error).message);
+    return [];
+  }
+}
+
+/**
+ * The same appointments, grouped by time-of-day bracket instead of by type.
+ *
+ * A second read rather than a bracket column on the one above: adding the
+ * bracket there multiplies every group on the page by the number of brackets a
+ * doctor works, for the sake of one table, and the engine would then have to
+ * re-sum it away. Grouped this way the month is a few thousand rows.
+ *
+ * The division is integer division in Postgres, so start_min 605 and 719 both
+ * land on 600. Untimed appointments keep a null bracket and are reported as
+ * unplaceable rather than being swept into midnight.
+ */
+export async function getCapacityAppointmentBrackets(
+  range: DateRange,
+): Promise<BracketAppointmentGroup[]> {
+  if (!hasDb) return [];
+  try {
+    const rows = await dbQuery<{
+      date: string;
+      doctor_id: string;
+      bracket_start: number | null;
+      appt_type: string | null;
+      status_bucket: BracketAppointmentGroup['statusBucket'];
+      n: number;
+    }>(
+      `select a.appt_date::text as date,
+              a.practitioner_id as doctor_id,
+              (a.start_min::int / $3::int) * $3::int as bracket_start,
+              a.appt_type,
+              a.status_bucket,
+              count(*)::int as n
+         from healpath.capacity_appointments a
+        where a.appt_date between $1 and $2
+        group by 1, 2, 3, 4, 5`,
+      [range.from, range.to, BRACKET_MINUTES],
+    );
+    return rows.map((row) => ({
+      date: row.date,
+      doctorId: Number(row.doctor_id),
+      bracketStart: row.bracket_start == null ? null : Number(row.bracket_start),
+      apptType: row.appt_type,
+      statusBucket: row.status_bucket,
+      count: Number(row.n),
+    }));
+  } catch (error) {
+    console.warn('capacity bracket query failed:', (error as Error).message);
     return [];
   }
 }
