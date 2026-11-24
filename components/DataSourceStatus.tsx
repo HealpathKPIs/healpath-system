@@ -33,6 +33,10 @@ function formatTimestamp(value: string | null | undefined) {
 
 const TONE = {
   live: { dot: '🟢', label: 'Live', color: 'var(--success)' },
+  // Healthy, but it says what it is: the figures came from the database and are
+  // at most one memo TTL old. Distinct from the bundled snapshot, which is both
+  // far older and only reached when the database could not answer.
+  cached: { dot: '🟢', label: 'Live (cached)', color: 'var(--success)' },
   snapshot: { dot: '🟡', label: 'Cached Snapshot', color: 'var(--warning)' },
   mixed: { dot: '🟠', label: 'Mixed Sources', color: 'var(--warning)' },
   unavailable: { dot: '🔴', label: 'Unavailable', color: 'var(--danger)' },
@@ -46,6 +50,8 @@ export async function DataSourceBadge() {
   const title =
     state.status === 'live'
       ? `Live data · source: Supabase · read ${formatTimestamp(state.readAt)}`
+      : state.status === 'cached'
+        ? `Live data from the in-process cache · database reachable · ${state.memoryCacheReads.map((read) => read.context).join(', ') || 'no reads'} · dropped on the next import`
       : state.status === 'snapshot'
         ? `Cached snapshot ${state.snapshot?.version ?? ''} · generated ${formatTimestamp(state.snapshot?.generatedAt)} · covers ${state.snapshot?.coverage ?? 'unknown'} · data may be outdated`
         : state.status === 'mixed'
@@ -76,7 +82,9 @@ export async function DataSourceBadge() {
 /** The retrying banner — renders nothing while the data is live. */
 export default async function DataSourceStatus() {
   const state = await currentState();
-  if (state.status === 'live') return null;
+  // 'cached' raises no banner: nothing is degraded, and a warning on every
+  // repeat page view would train people to ignore the one that matters.
+  if (state.status === 'live' || state.status === 'cached') return null;
   return (
     <DataSourceBanner
       status={state.status}

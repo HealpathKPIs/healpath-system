@@ -19,7 +19,14 @@
 import { cache } from 'react';
 import snapshot from '../data/snapshot2026.json';
 
-export type DataSourceStatus = 'live' | 'snapshot' | 'mixed' | 'unavailable';
+/**
+ * 'cached' is the in-process memo in lib/query-cache: data that WAS read live,
+ * at most one TTL ago, dropped the moment an import commits. It is deliberately
+ * not 'live' (this request did not touch the database) and deliberately not
+ * 'snapshot' (the bundled snapshot2026.json is a different and much older
+ * thing, and conflating them would make a healthy page look degraded).
+ */
+export type DataSourceStatus = 'live' | 'cached' | 'snapshot' | 'mixed' | 'unavailable';
 export type OperationalStatus = 'healthy' | 'degraded' | 'unavailable';
 
 export interface SnapshotMeta {
@@ -57,6 +64,14 @@ interface RequestDataSource {
   failures: QueryFailure[];
   cachedReads: CachedRead[];
   unavailableReads: UnavailableRead[];
+  /**
+   * Memo hits, kept apart from `cachedReads` on purpose. A snapshot read means
+   * the database could not answer; a memo hit means it already did. Counting
+   * them together would both paint a healthy page as a degraded snapshot AND
+   * let a memo hit satisfy the "cached data exists" escape in
+   * classifyDataSource, which is exactly how an outage could show Live.
+   */
+  memoryCacheReads: CachedRead[];
 }
 
 // React's cache() scopes this to a single request/render pass. It only exists
@@ -65,7 +80,7 @@ interface RequestDataSource {
 // resolved lazily and defensively — outside a render each caller just gets a
 // throwaway store, and logging still happens; only the per-request roll-up is
 // skipped. Building it at module scope instead crashes the importer on load.
-const fresh = (): RequestDataSource => ({ liveQueries: 0, failures: [], cachedReads: [], unavailableReads: [] });
+const fresh = (): RequestDataSource => ({ liveQueries: 0, failures: [], cachedReads: [], unavailableReads: [], memoryCacheReads: [] });
 
 let requestStore: (() => RequestDataSource) | null = null;
 
@@ -90,10 +105,45 @@ export function snapshotAvailable(): boolean {
   return Array.isArray((snapshot as { months?: unknown[] }).months) && (snapshot as { months: unknown[] }).months.length > 0;
 }
 
-export function recordLiveQuery(): void {
-  store().liveQueries += 1;
+/**
+ * Process-wide outcome markers, deliberately NOT request-scoped.
+ *
+ * lib/query-cache has to decide whether the read it just awaited actually
+ * reached the database or quietly fell back to the snapshot, and it has to be
+ * able to decide that in the RSC runtime, in the CLI importer and in tests
+ * alike. The per-request store cannot answer that: outside a render, store()
+ * hands every caller a throwaway object, so nothing accumulates.
+ *
+ * These two counters only ever increase, and the memo reads them either side of
+ * the call. Under concurrency another request's degradation can land between
+ * the two reads, in which case the memo declines to cache a result it could
+ * have kept. That is the safe direction to be wrong in: a missed cache entry
+ * costs one query, a cached snapshot costs wrong numbers.
+ */
+let liveReadMarker = 0;
+let degradedReadMarker = 0;
+
+export interface ReadOutcomeMarker {
+  live: number;
+  degraded: number;
 }
 
+export function readOutcomeMarker(): ReadOutcomeMarker {
+  return { live: liveReadMarker, degraded: degradedReadMarker };
+}
+
+export function recordLiveQuery(): void {
+  store().liveQueries += 1;
+  liveReadMarker += 1;
+}
+
+/**
+ * A read served from the in-process memo. Not a degradation: the value came
+ * from the database, within one TTL, and an import drops it.
+ */
+export function recordMemoryCacheRead(context: string, detail: string): void {
+  store().memoryCacheReads.push({ at: new Date().toISOString(), context, source: 'memory-cache', detail });
+}
 
 export function recordCachedRead(
   context: string,
@@ -101,11 +151,13 @@ export function recordCachedRead(
   source: CachedRead['source'] = 'bundled-snapshot',
 ): void {
   store().cachedReads.push({ at: new Date().toISOString(), context, source, detail });
+  degradedReadMarker += 1;
 }
 
 export function recordUnavailableRead(context: string, reason: string): void {
   const entry = { at: new Date().toISOString(), context, reason };
   store().unavailableReads.push(entry);
+  degradedReadMarker += 1;
   console.error('[data-source] requested view unavailable', JSON.stringify(entry));
 }
 
@@ -120,6 +172,7 @@ export function recordQueryFailure(context: string, error: unknown): void {
     message: error instanceof Error ? error.message : String(error),
   };
   store().failures.push(failure);
+  degradedReadMarker += 1;
 
   const meta = snapshotMeta();
   console.error(
@@ -139,12 +192,13 @@ export function recordQueryFailure(context: string, error: unknown): void {
 export interface DataSourceState {
   status: DataSourceStatus;
   operationalStatus: OperationalStatus;
-  source: 'LIVE' | 'CACHED' | 'MIXED' | 'UNAVAILABLE';
+  source: 'LIVE' | 'LIVE (CACHED)' | 'CACHED' | 'MIXED' | 'UNAVAILABLE';
   /** When this page read its data. */
   readAt: string;
   failures: QueryFailure[];
   cachedReads: CachedRead[];
   unavailableReads: UnavailableRead[];
+  memoryCacheReads: CachedRead[];
   snapshot: SnapshotMeta | null;
 }
 
@@ -155,12 +209,24 @@ export function classifyDataSource(signals: {
   failureCount: number;
   cachedReadCount: number;
   unavailableReadCount: number;
+  /**
+   * Reads served from the in-process memo. Optional so existing callers and
+   * tests keep their meaning; absent is treated as zero.
+   */
+  memoryCacheReadCount?: number;
 }): DataSourceStatus {
   const databaseDown = !signals.hasDb || signals.databaseReachable === false;
+  // Memo hits are intentionally absent from this first condition. A warm memo
+  // during an outage must still report 'unavailable': the page is showing data
+  // the database cannot currently confirm, and saying anything softer than that
+  // is the failure mode this whole module exists to prevent.
   if (signals.unavailableReadCount > 0 || (databaseDown && signals.cachedReadCount === 0)) return 'unavailable';
   if (signals.cachedReadCount > 0 && signals.liveQueries > 0) return 'mixed';
   if (signals.cachedReadCount > 0) return 'snapshot';
   if (signals.failureCount > 0) return 'unavailable';
+  // Nothing degraded, the database is reachable, and this request answered
+  // entirely from the memo without reading it. That is not a lie-worthy 'live'.
+  if ((signals.memoryCacheReadCount ?? 0) > 0 && signals.liveQueries === 0) return 'cached';
   return 'live';
 }
 
@@ -180,7 +246,7 @@ export function classifyDataSource(signals: {
  * but it must never claim data is live when it is not.
  */
 export function getDataSourceState(hasDb: boolean, databaseReachable?: boolean): DataSourceState {
-  const { liveQueries, failures, cachedReads, unavailableReads } = store();
+  const { liveQueries, failures, cachedReads, unavailableReads, memoryCacheReads } = store();
   const status = classifyDataSource({
     hasDb,
     databaseReachable,
@@ -188,20 +254,25 @@ export function getDataSourceState(hasDb: boolean, databaseReachable?: boolean):
     failureCount: failures.length,
     cachedReadCount: cachedReads.length,
     unavailableReadCount: unavailableReads.length,
+    memoryCacheReadCount: memoryCacheReads.length,
   });
 
-  const operationalStatus: OperationalStatus = status === 'live'
+  // 'cached' is healthy: the numbers came from the database, the database is
+  // reachable right now, and nothing fell back. Only its age is different.
+  const operationalStatus: OperationalStatus = status === 'live' || status === 'cached'
     ? 'healthy'
     : status === 'unavailable'
       ? 'unavailable'
       : 'degraded';
   const source = status === 'live'
     ? 'LIVE'
-    : status === 'snapshot'
-      ? 'CACHED'
-      : status === 'mixed'
-        ? 'MIXED'
-        : 'UNAVAILABLE';
+    : status === 'cached'
+      ? 'LIVE (CACHED)'
+      : status === 'snapshot'
+        ? 'CACHED'
+        : status === 'mixed'
+          ? 'MIXED'
+          : 'UNAVAILABLE';
 
   return {
     status,
@@ -211,6 +282,7 @@ export function getDataSourceState(hasDb: boolean, databaseReachable?: boolean):
     failures,
     cachedReads,
     unavailableReads,
+    memoryCacheReads,
     snapshot: snapshotMeta(),
   };
 }

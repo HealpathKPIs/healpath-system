@@ -17,9 +17,15 @@
 
 import { revalidatePath } from 'next/cache';
 import { invalidateFilterOptions } from './queries';
+import { invalidateQueryCache } from './query-cache';
 
 export function invalidateDashboardData(): void {
   invalidateFilterOptions();
+  // The measure reads (KPIs, trends, rankings, diagnostics) are memoised for a
+  // short TTL by lib/query-cache. Dropping them here is what makes an import
+  // visible on the very next render instead of up to one TTL later, and it is
+  // the same contract the enumeration cache above already follows.
+  invalidateQueryCache();
   try {
     revalidatePath('/', 'layout');
   } catch (e) {

@@ -22,6 +22,7 @@ import {
   sqlNormalizeKey,
 } from './filter-normalize';
 import { recordCachedRead, recordUnavailableRead } from './data-source';
+import { memoRead } from './query-cache';
 import { evaluateSnapshotCoverage } from './snapshot-coverage';
 import snapshot from '../data/snapshot2026.json';
 import {
@@ -559,6 +560,10 @@ export async function getCascadingFilterOptions(selection: CascadeSelection): Pr
 }
 
 export async function getKpis(f: Filters): Promise<Kpis> {
+  return memoRead('getKpis', [f], () => getKpisUncached(f));
+}
+
+async function getKpisUncached(f: Filters): Promise<Kpis> {
   if (hasDb) {
     try {
       const params: unknown[] = visitParams(f);
@@ -655,6 +660,10 @@ function roundRatio(numerator: number, denominator: number): number {
 }
 
 export async function getDiseases(f: Filters, limit = 10): Promise<RankRow[]> {
+  return memoRead('getDiseases', [f, limit], () => getDiseasesUncached(f, limit));
+}
+
+async function getDiseasesUncached(f: Filters, limit: number): Promise<RankRow[]> {
   if (hasDb) {
     try {
       const rows = await dbQuery<{ label: string; value: number }>(`
@@ -673,6 +682,10 @@ export async function getDiseases(f: Filters, limit = 10): Promise<RankRow[]> {
   return s ? toRank(s.topIcd.slice(0, limit) as [string, number][]) : [];
 }
 export async function getDiseaseDescriptions(f: Filters): Promise<RankRow[]> {
+  return memoRead('getDiseaseDescriptions', [f], () => getDiseaseDescriptionsUncached(f));
+}
+
+async function getDiseaseDescriptionsUncached(f: Filters): Promise<RankRow[]> {
   if (hasDb) {
     try {
       const rows = await dbQuery<{ label: string; value: number }>(`
@@ -692,6 +705,10 @@ export async function getDiseaseDescriptions(f: Filters): Promise<RankRow[]> {
   return s ? applySearch(toRank(s.topIcdDesc as [string, number][]), f) : [];
 }
 export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: RankRow[] }> {
+  return memoRead('getDrugs', [f], () => getDrugsUncached(f));
+}
+
+async function getDrugsUncached(f: Filters): Promise<{ ac: RankRow[]; brands: RankRow[] }> {
   if (hasDb) {
     try {
       const [ac, brands] = await Promise.all([
@@ -726,6 +743,10 @@ export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: Ran
     : { ac: [], brands: [] };
 }
 export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; scans: RankRow[] }> {
+  return memoRead('getDiagnostics', [f], () => getDiagnosticsUncached(f));
+}
+
+async function getDiagnosticsUncached(f: Filters): Promise<{ labs: RankRow[]; scans: RankRow[] }> {
   if (hasDb) {
     try {
       const [labs, scans] = await Promise.all([
@@ -761,6 +782,12 @@ export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; sca
 }
 
 export async function getDiagnosticEntityKpis(kind: 'lab' | 'scan', entity: string, f: Filters): Promise<Kpis> {
+  return memoRead('getDiagnosticEntityKpis', [kind, entity, f], () =>
+    getDiagnosticEntityKpisUncached(kind, entity, f),
+  );
+}
+
+async function getDiagnosticEntityKpisUncached(kind: 'lab' | 'scan', entity: string, f: Filters): Promise<Kpis> {
   const table = kind === 'lab' ? 'lab_fact' : 'scan_fact';
   if (hasDb) {
     try {
@@ -807,6 +834,17 @@ export async function getDiagnosticEntityKpis(kind: 'lab' | 'scan', entity: stri
 }
 
 export async function getPerformanceEntityMetrics(
+  kind: PerformanceEntityKind,
+  entities: string[],
+  months: string[],
+  f: Filters,
+): Promise<PerformanceEntityMetric[]> {
+  return memoRead('getPerformanceEntityMetrics', [kind, entities, months, f], () =>
+    getPerformanceEntityMetricsUncached(kind, entities, months, f),
+  );
+}
+
+async function getPerformanceEntityMetricsUncached(
   kind: PerformanceEntityKind,
   entities: string[],
   months: string[],
@@ -926,6 +964,10 @@ export async function getPerformanceEntityMetrics(
   return [];
 }
 export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; doctors: DoctorRow[] }> {
+  return memoRead('getSpecialties', [f], () => getSpecialtiesUncached(f));
+}
+
+async function getSpecialtiesUncached(f: Filters): Promise<{ ranking: RankRow[]; doctors: DoctorRow[] }> {
   if (hasDb) {
     try {
       const [ranking, doctors] = await Promise.all([
@@ -1095,6 +1137,18 @@ export async function searchOptions(scope: SearchScope, query: string): Promise<
 }
 
 export async function getTrends(
+  specialty?: string | null,
+  doctor?: string | null,
+  drug?: string | null,
+  disease?: string | null,
+  riskCarrier?: string | null,
+): Promise<TrendResponse> {
+  return memoRead('getTrends', [specialty ?? null, doctor ?? null, drug ?? null, disease ?? null, riskCarrier ?? null], () =>
+    getTrendsUncached(specialty, doctor, drug, disease, riskCarrier),
+  );
+}
+
+async function getTrendsUncached(
   specialty?: string | null,
   doctor?: string | null,
   drug?: string | null,
