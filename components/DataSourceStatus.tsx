@@ -34,7 +34,8 @@ function formatTimestamp(value: string | null | undefined) {
 const TONE = {
   live: { dot: '🟢', label: 'Live', color: 'var(--success)' },
   snapshot: { dot: '🟡', label: 'Cached Snapshot', color: 'var(--warning)' },
-  offline: { dot: '🔴', label: 'Offline', color: 'var(--danger)' },
+  mixed: { dot: '🟠', label: 'Mixed Sources', color: 'var(--warning)' },
+  unavailable: { dot: '🔴', label: 'Unavailable', color: 'var(--danger)' },
 } as const;
 
 /** The small status badge. Sits in the page header next to the title. */
@@ -47,7 +48,9 @@ export async function DataSourceBadge() {
       ? `Live data · source: Supabase · read ${formatTimestamp(state.readAt)}`
       : state.status === 'snapshot'
         ? `Cached snapshot ${state.snapshot?.version ?? ''} · generated ${formatTimestamp(state.snapshot?.generatedAt)} · covers ${state.snapshot?.coverage ?? 'unknown'} · data may be outdated`
-        : 'Database unavailable and no cached snapshot';
+        : state.status === 'mixed'
+          ? `Mixed live and cached sources · cached reads: ${state.cachedReads.map((read) => read.context).join(', ') || 'unknown'}`
+          : `Requested data unavailable · ${state.unavailableReads.map((read) => read.context).join(', ') || 'no exact cached coverage'}`;
 
   return (
     <span
@@ -61,7 +64,7 @@ export async function DataSourceBadge() {
     >
       <span aria-hidden="true">{tone.dot}</span>
       {tone.label}
-      {state.status === 'snapshot' && state.snapshot?.generatedAt ? (
+      {(state.status === 'snapshot' || state.status === 'mixed') && state.snapshot?.generatedAt ? (
         <span style={{ color: 'var(--text-muted)', fontWeight: 650 }}>
           · {formatTimestamp(state.snapshot.generatedAt)}
         </span>
@@ -80,6 +83,8 @@ export default async function DataSourceStatus() {
       snapshotGeneratedAt={state.snapshot?.generatedAt ?? null}
       snapshotVersion={state.snapshot?.version ?? null}
       coverage={state.snapshot?.coverage ?? null}
+      cachedReads={state.cachedReads.map(({ context, source, detail }) => ({ context, source, detail }))}
+      unavailableReads={state.unavailableReads.map(({ context, reason }) => ({ context, reason }))}
     />
   );
 }

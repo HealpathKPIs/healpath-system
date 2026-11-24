@@ -17,7 +17,12 @@ export async function GET() {
     ? 'live'
     : haveSnapshot
       ? 'snapshot'
-      : 'offline';
+      : 'unavailable';
+  const meta = snapshotMeta();
+  const generatedAtMs = meta?.generatedAt ? Date.parse(meta.generatedAt) : Number.NaN;
+  const snapshotAgeDays = Number.isFinite(generatedAtMs)
+    ? Number(((Date.now() - generatedAtMs) / 86_400_000).toFixed(1))
+    : null;
 
   if (!database.reachable) {
     console.error(
@@ -42,9 +47,11 @@ export async function GET() {
         latencyMs: database.latencyMs,
         ...(database.error ? { error: database.error } : {}),
       },
-      snapshot: haveSnapshot ? snapshotMeta() : null,
+      source: database.reachable ? 'LIVE' : haveSnapshot ? 'CACHED_AVAILABLE' : 'UNAVAILABLE',
+      operationalStatus: database.reachable ? 'HEALTHY' : haveSnapshot ? 'DEGRADED' : 'UNAVAILABLE',
+      snapshot: haveSnapshot ? { ...meta, ageDays: snapshotAgeDays, exactRequestSupport: 'unknown-until-requested' } : null,
     },
     // Never cache a health verdict.
-    { headers: { 'Cache-Control': 'no-store, max-age=0' }, status: status === 'offline' ? 503 : 200 },
+    { headers: { 'Cache-Control': 'no-store, max-age=0' }, status: status === 'unavailable' ? 503 : 200 },
   );
 }

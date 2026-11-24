@@ -19,7 +19,8 @@
 import { cache } from 'react';
 import snapshot from '../data/snapshot2026.json';
 
-export type DataSourceStatus = 'live' | 'snapshot' | 'offline';
+export type DataSourceStatus = 'live' | 'snapshot' | 'mixed' | 'unavailable';
+export type OperationalStatus = 'healthy' | 'degraded' | 'unavailable';
 
 export interface SnapshotMeta {
   version: string;
@@ -38,9 +39,24 @@ export interface QueryFailure {
   message: string;
 }
 
+export interface CachedRead {
+  at: string;
+  context: string;
+  source: 'bundled-snapshot' | 'memory-cache';
+  detail: string;
+}
+
+export interface UnavailableRead {
+  at: string;
+  context: string;
+  reason: string;
+}
+
 interface RequestDataSource {
   liveQueries: number;
   failures: QueryFailure[];
+  cachedReads: CachedRead[];
+  unavailableReads: UnavailableRead[];
 }
 
 // React's cache() scopes this to a single request/render pass. It only exists
@@ -49,7 +65,7 @@ interface RequestDataSource {
 // resolved lazily and defensively — outside a render each caller just gets a
 // throwaway store, and logging still happens; only the per-request roll-up is
 // skipped. Building it at module scope instead crashes the importer on load.
-const fresh = (): RequestDataSource => ({ liveQueries: 0, failures: [] });
+const fresh = (): RequestDataSource => ({ liveQueries: 0, failures: [], cachedReads: [], unavailableReads: [] });
 
 let requestStore: (() => RequestDataSource) | null = null;
 
@@ -76,6 +92,21 @@ export function snapshotAvailable(): boolean {
 
 export function recordLiveQuery(): void {
   store().liveQueries += 1;
+}
+
+
+export function recordCachedRead(
+  context: string,
+  detail: string,
+  source: CachedRead['source'] = 'bundled-snapshot',
+): void {
+  store().cachedReads.push({ at: new Date().toISOString(), context, source, detail });
+}
+
+export function recordUnavailableRead(context: string, reason: string): void {
+  const entry = { at: new Date().toISOString(), context, reason };
+  store().unavailableReads.push(entry);
+  console.error('[data-source] requested view unavailable', JSON.stringify(entry));
 }
 
 /**
@@ -107,10 +138,30 @@ export function recordQueryFailure(context: string, error: unknown): void {
 
 export interface DataSourceState {
   status: DataSourceStatus;
+  operationalStatus: OperationalStatus;
+  source: 'LIVE' | 'CACHED' | 'MIXED' | 'UNAVAILABLE';
   /** When this page read its data. */
   readAt: string;
   failures: QueryFailure[];
+  cachedReads: CachedRead[];
+  unavailableReads: UnavailableRead[];
   snapshot: SnapshotMeta | null;
+}
+
+export function classifyDataSource(signals: {
+  hasDb: boolean;
+  databaseReachable?: boolean;
+  liveQueries: number;
+  failureCount: number;
+  cachedReadCount: number;
+  unavailableReadCount: number;
+}): DataSourceStatus {
+  const databaseDown = !signals.hasDb || signals.databaseReachable === false;
+  if (signals.unavailableReadCount > 0 || (databaseDown && signals.cachedReadCount === 0)) return 'unavailable';
+  if (signals.cachedReadCount > 0 && signals.liveQueries > 0) return 'mixed';
+  if (signals.cachedReadCount > 0) return 'snapshot';
+  if (signals.failureCount > 0) return 'unavailable';
+  return 'live';
 }
 
 /**
@@ -129,15 +180,37 @@ export interface DataSourceState {
  * but it must never claim data is live when it is not.
  */
 export function getDataSourceState(hasDb: boolean, databaseReachable?: boolean): DataSourceState {
-  const { failures } = store();
-  const haveSnapshot = snapshotAvailable();
-  const degraded = !hasDb || failures.length > 0 || databaseReachable === false;
+  const { liveQueries, failures, cachedReads, unavailableReads } = store();
+  const status = classifyDataSource({
+    hasDb,
+    databaseReachable,
+    liveQueries,
+    failureCount: failures.length,
+    cachedReadCount: cachedReads.length,
+    unavailableReadCount: unavailableReads.length,
+  });
 
-  const status: DataSourceStatus = !degraded
-    ? 'live'
-    : haveSnapshot
-      ? 'snapshot'
-      : 'offline';
+  const operationalStatus: OperationalStatus = status === 'live'
+    ? 'healthy'
+    : status === 'unavailable'
+      ? 'unavailable'
+      : 'degraded';
+  const source = status === 'live'
+    ? 'LIVE'
+    : status === 'snapshot'
+      ? 'CACHED'
+      : status === 'mixed'
+        ? 'MIXED'
+        : 'UNAVAILABLE';
 
-  return { status, readAt: new Date().toISOString(), failures, snapshot: snapshotMeta() };
+  return {
+    status,
+    operationalStatus,
+    source,
+    readAt: new Date().toISOString(),
+    failures,
+    cachedReads,
+    unavailableReads,
+    snapshot: snapshotMeta(),
+  };
 }

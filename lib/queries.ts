@@ -21,6 +21,8 @@ import {
   sqlNormalize,
   sqlNormalizeKey,
 } from './filter-normalize';
+import { recordCachedRead, recordUnavailableRead } from './data-source';
+import { evaluateSnapshotCoverage } from './snapshot-coverage';
 import snapshot from '../data/snapshot2026.json';
 import {
   type ChronicCalendarEntry,
@@ -261,11 +263,19 @@ export const SQL = {
 // ---------------------------------------------------------------------------
 
 type Snap = typeof snapshot;
-function snapFor(f: Filters): Snap['all'] {
-  if (f.month && (snapshot.byMonth as Record<string, Snap['all']>)[f.month]) {
-    return (snapshot.byMonth as Record<string, Snap['all']>)[f.month];
+const EMPTY_KPIS: Kpis = {
+  visits: 0, patients: 0, doctors: 0, specialties: 0,
+  avgMeds: 0, avgLabs: 0, avgScans: 0,
+};
+
+function snapFor(f: Filters, context: string): Snap['all'] | null {
+  const decision = evaluateSnapshotCoverage(f, snapshot.months as string[]);
+  if (decision.status === 'unavailable') {
+    recordUnavailableRead(context, decision.reason);
+    return null;
   }
-  return snapshot.all;
+  recordCachedRead(context, decision.reason);
+  return (snapshot.byMonth as Record<string, Snap['all']>)[decision.month];
 }
 
 function snapshotRankValue(rows: unknown, entity: string): number {
@@ -353,6 +363,11 @@ function snapshotOptions(): FilterOptions {
   };
 }
 
+function cachedSnapshotOptions(context: string): FilterOptions {
+  recordCachedRead(context, 'Bundled snapshot filter catalog is being used.');
+  return snapshotOptions();
+}
+
 /**
  * Drop the cached filter enumerations. Called after every successful import so
  * the very next render re-reads months/doctors/specialties/risk carriers.
@@ -389,6 +404,13 @@ async function fetchFilterOptions(): Promise<FilterOptions> {
     PatientMasterService.getAllRiskCarriers(),
   ]);
   const previous = enumCache ?? snapshotOptions();
+  if (!months.length || !specialties.length || !doctors.length) {
+    recordCachedRead(
+      'getFilterOptions',
+      'At least one live filter enumeration was empty; the previous catalog filled that dimension.',
+      enumCache ? 'memory-cache' : 'bundled-snapshot',
+    );
+  }
   // An empty result is treated as "could not enumerate" rather than "no data":
   // keep the previous list instead of blanking a dropdown (and, with it, the
   // user's current selection — FilterBar resets selections that vanish).
@@ -404,7 +426,7 @@ async function fetchFilterOptions(): Promise<FilterOptions> {
 
 /** Live filter dropdown values (months, specialties, doctors, risk carriers). */
 export async function getFilterOptions(): Promise<FilterOptions> {
-  if (!hasDb) return enumCache ?? snapshotOptions();
+  if (!hasDb) return enumCache ?? cachedSnapshotOptions('getFilterOptions');
   if (enumCache && Date.now() - enumCachedAt < ENUM_TTL_MS) return enumCache;
   if (!enumInFlight) {
     const generation = enumGeneration;
@@ -418,7 +440,11 @@ export async function getFilterOptions(): Promise<FilterOptions> {
       })
       .catch((e) => {
         console.warn('filter options refresh failed, previous values retained:', (e as Error).message);
-        return enumCache ?? snapshotOptions();
+        if (enumCache) {
+          recordCachedRead('getFilterOptions', 'Last known live filter catalog retained after refresh failure.', 'memory-cache');
+          return enumCache;
+        }
+        return cachedSnapshotOptions('getFilterOptions');
       })
       .finally(() => {
         enumInFlight = null;
@@ -517,11 +543,17 @@ async function fetchCascadingOptions(selection: CascadeSelection): Promise<Filte
  */
 export async function getCascadingFilterOptions(selection: CascadeSelection): Promise<FilterOptions> {
   const unfiltered = await getFilterOptions();
-  if (!hasDb || !hasSelection(selection)) return unfiltered;
+  if (!hasDb || !hasSelection(selection)) {
+    if (!hasDb && hasSelection(selection)) {
+      recordUnavailableRead('getCascadingFilterOptions', 'Snapshot cannot reproduce cascading filtered option lists.');
+    }
+    return unfiltered;
+  }
   try {
     return await fetchCascadingOptions(selection);
   } catch (e) {
     console.warn('cascading filter options failed, using unfiltered list:', (e as Error).message);
+    recordUnavailableRead('getCascadingFilterOptions', 'Live cascading options failed; unfiltered options cannot represent the selected view.');
     return unfiltered;
   }
 }
@@ -605,7 +637,7 @@ export async function getKpis(f: Filters): Promise<Kpis> {
       console.warn('getKpis live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  return snapFor(f).kpi;
+  return snapFor(f, 'getKpis')?.kpi ?? EMPTY_KPIS;
 }
 
 function toRank(rows: [string, number][]): RankRow[] {
@@ -637,7 +669,8 @@ export async function getDiseases(f: Filters, limit = 10): Promise<RankRow[]> {
       console.warn('getDiseases live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  return toRank(snapFor(f).topIcd.slice(0, limit) as [string, number][]);
+  const s = snapFor(f, 'getDiseases');
+  return s ? toRank(s.topIcd.slice(0, limit) as [string, number][]) : [];
 }
 export async function getDiseaseDescriptions(f: Filters): Promise<RankRow[]> {
   if (hasDb) {
@@ -655,7 +688,8 @@ export async function getDiseaseDescriptions(f: Filters): Promise<RankRow[]> {
       console.warn('getDiseaseDescriptions live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  return applySearch(toRank(snapFor(f).topIcdDesc as [string, number][]), f);
+  const s = snapFor(f, 'getDiseaseDescriptions');
+  return s ? applySearch(toRank(s.topIcdDesc as [string, number][]), f) : [];
 }
 export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: RankRow[] }> {
   if (hasDb) {
@@ -686,8 +720,10 @@ export async function getDrugs(f: Filters): Promise<{ ac: RankRow[]; brands: Ran
       console.warn('getDrugs live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  const s = snapFor(f);
-  return { ac: applySearch(toRank(s.topAc as [string, number][]), f), brands: applySearch(toRank(s.topBrand as [string, number][]), f) };
+  const s = snapFor(f, 'getDrugs');
+  return s
+    ? { ac: applySearch(toRank(s.topAc as [string, number][]), f), brands: applySearch(toRank(s.topBrand as [string, number][]), f) }
+    : { ac: [], brands: [] };
 }
 export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; scans: RankRow[] }> {
   if (hasDb) {
@@ -718,8 +754,10 @@ export async function getDiagnostics(f: Filters): Promise<{ labs: RankRow[]; sca
       console.warn('getDiagnostics live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  const s = snapFor(f);
-  return { labs: applySearch(toRank(s.topLab as [string, number][]), f), scans: applySearch(toRank(s.topScan as [string, number][]), f) };
+  const s = snapFor(f, 'getDiagnostics');
+  return s
+    ? { labs: applySearch(toRank(s.topLab as [string, number][]), f), scans: applySearch(toRank(s.topScan as [string, number][]), f) }
+    : { labs: [], scans: [] };
 }
 
 export async function getDiagnosticEntityKpis(kind: 'lab' | 'scan', entity: string, f: Filters): Promise<Kpis> {
@@ -764,7 +802,8 @@ export async function getDiagnosticEntityKpis(kind: 'lab' | 'scan', entity: stri
       console.warn('getDiagnosticEntityKpis live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  return snapFor(f).kpi;
+  recordUnavailableRead('getDiagnosticEntityKpis', 'Snapshot does not contain exact diagnostic-entity KPI aggregates.');
+  return EMPTY_KPIS;
 }
 
 export async function getPerformanceEntityMetrics(
@@ -883,7 +922,8 @@ export async function getPerformanceEntityMetrics(
       console.warn('getPerformanceEntityMetrics live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  return snapshotPerformanceMetrics(kind, entities, months);
+  recordUnavailableRead('getPerformanceEntityMetrics', 'Snapshot does not contain complete entity-by-month performance aggregates.');
+  return [];
 }
 export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; doctors: DoctorRow[] }> {
   if (hasDb) {
@@ -965,7 +1005,8 @@ export async function getSpecialties(f: Filters): Promise<{ ranking: RankRow[]; 
       console.warn('getSpecialties live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  const s = snapFor(f);
+  const s = snapFor(f, 'getSpecialties');
+  if (!s) return { ranking: [], doctors: [] };
   const term = f.search?.trim().toLowerCase();
   const doctors = (s.doctors as DoctorRow[]).filter((d) =>
     !term || term.length < 2 ||
@@ -1049,7 +1090,8 @@ export async function searchOptions(scope: SearchScope, query: string): Promise<
       console.warn('searchOptions live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  return snapshotSearch(scope, term);
+  recordUnavailableRead('searchOptions', 'Snapshot contains ranked excerpts, not a complete searchable catalog.');
+  return [];
 }
 
 export async function getTrends(
@@ -1145,7 +1187,22 @@ export async function getTrends(
       console.warn('getTrends live query failed, falling back to snapshot:', (e as Error).message);
     }
   }
-  if (!points) points = snapshot.trend as TrendPoint[];
+  if (!points) {
+    const decision = evaluateSnapshotCoverage(
+      { month: null, specialty, doctor, drug, disease, riskCarrier },
+      snapshot.months as string[],
+    );
+    if (decision.status === 'unavailable') {
+      recordUnavailableRead('getTrends', decision.reason);
+      return {
+        points: [],
+        delta: { meds: 0, labs: 0, scans: 0 },
+        arrows: { meds: arrow(0), labs: arrow(0), scans: arrow(0) },
+      };
+    }
+    recordCachedRead('getTrends', decision.reason);
+    points = snapshot.trend as TrendPoint[];
+  }
   const n = points.length;
   const cur = points[n - 1], prev = points[n - 2] ?? cur;
   const d = {

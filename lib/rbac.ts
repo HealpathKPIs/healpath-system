@@ -17,6 +17,8 @@ export type UserProfile = {
 const ADMIN_ONLY_PATHS = [
   '/admin/import',
   '/admin/patient-master',
+  '/admin/data-trust',
+  '/admin/import-history',
   '/chronic/import',
   // Only the import page, never '/capacity' itself: this list matches by
   // prefix, so listing the section would hide every capacity result from

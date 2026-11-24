@@ -5,6 +5,7 @@ import TrendLine from '@/components/TrendLine';
 import TrendArrow from '@/components/TrendArrow';
 import { ExecutiveFeed, ExecutiveScenarioLayer, ExplainButton } from '@/components/ExecutiveExperience';
 import AnimatedNumber from '@/components/AnimatedNumber';
+import ExecutiveTrustIndicator from '@/components/ExecutiveTrustIndicator';
 import { Suspense } from 'react';
 import type { CSSProperties } from 'react';
 import { getKpis, getDiseases, getDrugs, getTrends, getDiagnostics, getCascadingFilterOptions, resolveFilters } from '@/lib/queries';
@@ -271,6 +272,8 @@ export default async function Overview({ searchParams }: { searchParams: { month
           />
         </Suspense>
       </div>
+
+      <ExecutiveTrustIndicator />
 
       <ExecutiveSummary points={summary} />
 

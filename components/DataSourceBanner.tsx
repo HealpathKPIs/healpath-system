@@ -23,11 +23,15 @@ export default function DataSourceBanner({
   snapshotGeneratedAt,
   snapshotVersion,
   coverage,
+  cachedReads,
+  unavailableReads,
 }: {
-  status: 'snapshot' | 'offline';
+  status: 'snapshot' | 'mixed' | 'unavailable';
   snapshotGeneratedAt?: string | null;
   snapshotVersion?: string | null;
   coverage?: string | null;
+  cachedReads: { context: string; source: 'bundled-snapshot' | 'memory-cache'; detail: string }[];
+  unavailableReads: { context: string; reason: string }[];
 }) {
   const router = useRouter();
   const [attempt, setAttempt] = useState(0);
@@ -66,11 +70,13 @@ export default function DataSourceBanner({
     return () => { clearInterval(tick); clearTimeout(timer); };
   }, [attempt, check]);
 
-  const offline = status === 'offline';
-  const tone = offline ? 'var(--danger)' : 'var(--warning)';
+  const unavailable = status === 'unavailable';
+  const mixed = status === 'mixed';
+  const tone = unavailable ? 'var(--danger)' : 'var(--warning)';
 
   return (
     <div
+      className={unavailable ? 'data-source-unavailable' : undefined}
       role="alert"
       aria-live="polite"
       style={{
@@ -85,14 +91,22 @@ export default function DataSourceBanner({
         gap: 6,
       }}
     >
+      {unavailable ? <style>{`.data-source-unavailable ~ * { display: none !important; }`}</style> : null}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: tone, fontWeight: 800, fontSize: 14 }}>
-        <span aria-hidden="true">{offline ? '🔴' : '🟡'}</span>
-        Database temporarily unavailable.
+        <span aria-hidden="true">{unavailable ? '🔴' : mixed ? '🟠' : '🟡'}</span>
+        {unavailable ? 'Requested view unavailable.' : mixed ? 'Degraded: mixed data sources.' : 'Viewing cached data.'}
       </div>
 
       <div style={{ color: 'var(--text-soft)', fontSize: 13.5, fontWeight: 600, lineHeight: 1.5 }}>
-        {offline ? (
-          <>Unable to load live dashboard data, and no cached snapshot is available.</>
+        {unavailable ? (
+          <>
+            Live data could not be used and the cached snapshot cannot accurately answer the complete requested view.
+            Values not covered by an exact cache match are suppressed below this warning.
+          </>
+        ) : mixed ? (
+          <>
+            This page includes both live and cached results. Treat the page as degraded; it is not a fully live view.
+          </>
         ) : (
           <>
             Unable to load live dashboard data. <b>Viewing cached snapshot.</b>
@@ -105,6 +119,17 @@ export default function DataSourceBanner({
           </>
         )}
       </div>
+
+      {cachedReads.length ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 12.5, lineHeight: 1.5 }}>
+          <b>Cached:</b> {cachedReads.map((read) => `${read.context} (${read.source === 'bundled-snapshot' ? 'snapshot' : 'last known live cache'})`).join('; ')}
+        </div>
+      ) : null}
+      {unavailableReads.length ? (
+        <div style={{ color: 'var(--danger)', fontSize: 12.5, lineHeight: 1.5 }}>
+          <b>Unavailable:</b> {unavailableReads.map((read) => `${read.context}: ${read.reason}`).join('; ')}
+        </div>
+      ) : null}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 }}>
         <span style={{ color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 650, fontVariantNumeric: 'tabular-nums' }}>
